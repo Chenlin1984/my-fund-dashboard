@@ -1430,73 +1430,6 @@ with tab1:
     st.markdown("## 🌐 總經位階評估 ＆ 拐點偵測")
     st.caption("MK（郭俊宏）三層指標加權方法論 v7 — 領先×2 | 中級×1 | 次級×0.5")
 
-    # ── v10.4 PMI/VIX 總經自動標籤 Banner ───────────────────────
-    _ind_t1 = st.session_state.get("indicators", {})
-    _pmi_t1 = _ind_t1.get("PMI", {}).get("value")
-    _vix_t1 = _ind_t1.get("VIX", {}).get("value")
-    _ue_t1  = _ind_t1.get("UNEMPLOYMENT", {}).get("value")
-    _cpi_t1 = _ind_t1.get("CPI", {}).get("value")
-    _cpi_pt1= _ind_t1.get("CPI", {}).get("prev")
-    if _pmi_t1 or _vix_t1 or _ue_t1:
-        _t1_banners = []
-        if _pmi_t1 and _vix_t1:
-            _pf_t1 = float(_pmi_t1); _vf_t1 = float(_vix_t1)
-            if _pf_t1 > 50 and _vf_t1 < 20:
-                _t1_banners.append(("🚀", "#00c853", "#071a0f",
-                    f"復甦/擴張訊號：PMI {_pf_t1:.1f} > 50 且 VIX {_vf_t1:.1f} < 20",
-                    "建議【加碼衛星資產】（成長基金）→ 股 7 債 3 配置"))
-            elif _pf_t1 > 50:
-                _t1_banners.append(("📈", "#69f0ae", "#071a10",
-                    f"景氣擴張但波動偏高：PMI {_pf_t1:.1f} > 50，VIX {_vf_t1:.1f} ≥ 20",
-                    "維持持有，衛星設停利 +10%~15%；等待 VIX < 20 再加碼"))
-            elif _pf_t1 < 50 and _vf_t1 > 25:
-                _t1_banners.append(("🔴", "#f44336", "#1f0505",
-                    f"衰退訊號：PMI {_pf_t1:.1f} < 50 且 VIX {_vf_t1:.1f} > 25",
-                    "建議【轉入核心資產】（配息/債券型）→ 股 4 債 6 配置"))
-            else:
-                _t1_banners.append(("⚠️", "#ff9800", "#1f1200",
-                    f"觀望：PMI {_pf_t1:.1f}，VIX {_vf_t1:.1f}",
-                    "維持股 5 債 5 中性配置，等待 PMI 方向確認"))
-        if _ue_t1:
-            try:
-                _ue_f = float(_ue_t1)
-                if _ue_f > 4.0:
-                    # v10.4: 判斷是否已進入降息通道（FED_RATE 下滑）
-                    _fed_v1  = _ind_t1.get("FED_RATE", {}).get("value")
-                    _fed_pv1 = _ind_t1.get("FED_RATE", {}).get("prev")
-                    _rate_cutting = False
-                    try:
-                        if _fed_v1 and _fed_pv1 and float(_fed_v1) < float(_fed_pv1):
-                            _rate_cutting = True
-                    except: pass
-                    if _rate_cutting:
-                        _t1_banners.append(("🏦", "#9c27b0", "#0d0014",
-                            f"失業率 {_ue_f:.1f}% > 4% ＋ 降息趨勢確立",
-                            "📌 鎖定長年期債券基金（20年期美債等）— 降息→債券價格上漲，鞏固現金流"))
-                    else:
-                        _t1_banners.append(("🔴", "#f44336", "#1f0505",
-                            f"失業率警戒：{_ue_f:.1f}% > 4%（衰退訊號）",
-                            "核心資產為主 → 股 4 債 6，等待 PMI 落底確認"))
-            except: pass
-        if _cpi_t1 and _cpi_pt1:
-            try:
-                if float(_cpi_t1) > float(_cpi_pt1) and float(_cpi_t1) > 3.0:
-                    _t1_banners.append(("⚠️", "#ff9800", "#1f1200",
-                        f"CPI 升溫：{float(_cpi_t1):.1f}% ↑（升息尾聲觀察期）",
-                        "衛星資產獲利了結 → 股 5 債 5；等待升息暫停訊號"))
-            except: pass
-        for _ic, _cc, _bg, _ttl, _act in _t1_banners:
-            st.markdown(
-                f"<div style='background:{_bg};border:2px solid {_cc};border-radius:10px;"
-                f"padding:12px 18px;margin:4px 0'>"
-                f"<div style='display:flex;align-items:flex-start;gap:12px'>"
-                f"<span style='font-size:22px;line-height:1'>{_ic}</span>"
-                f"<div><div style='color:{_cc};font-weight:700;font-size:13px'>{_ttl}</div>"
-                f"<div style='color:#ccc;font-size:12px;margin-top:4px'>➤ {_act}</div>"
-                f"</div></div></div>", unsafe_allow_html=True)
-        st.caption("📖 指標說明｜PMI（採購經理人指數）：製造業景氣溫度計，>50=擴張，<50=收縮｜VIX（恐慌指數）：市場恐慌程度，<20=平靜，>30=恐慌，>40=極度恐慌")
-        
-
     FRED_KEY, GEMINI_KEY = _load_keys()
     if not FRED_KEY:
         st.warning("⚠️ 請在 Cell 1 填入 FRED_API_KEY")
@@ -1557,6 +1490,70 @@ with tab1:
     else:
         ind   = st.session_state.indicators
         phase = st.session_state.phase_info
+
+        # ── v10.4 PMI/VIX 總經自動標籤 Banner（移至 fetch 之後，確保使用新鮮資料）
+        _pmi_t1  = ind.get("PMI", {}).get("value")
+        _vix_t1  = ind.get("VIX", {}).get("value")
+        _ue_t1   = ind.get("UNEMPLOYMENT", {}).get("value")
+        _cpi_t1  = ind.get("CPI", {}).get("value")
+        _cpi_pt1 = ind.get("CPI", {}).get("prev")
+        if _pmi_t1 or _vix_t1 or _ue_t1:
+            _t1_banners = []
+            if _pmi_t1 and _vix_t1:
+                _pf_t1 = float(_pmi_t1); _vf_t1 = float(_vix_t1)
+                if _pf_t1 > 50 and _vf_t1 < 20:
+                    _t1_banners.append(("🚀", "#00c853", "#071a0f",
+                        f"復甦/擴張訊號：PMI {_pf_t1:.1f} > 50 且 VIX {_vf_t1:.1f} < 20",
+                        "建議【加碼衛星資產】（成長基金）→ 股 7 債 3 配置"))
+                elif _pf_t1 > 50:
+                    _t1_banners.append(("📈", "#69f0ae", "#071a10",
+                        f"景氣擴張但波動偏高：PMI {_pf_t1:.1f} > 50，VIX {_vf_t1:.1f} ≥ 20",
+                        "維持持有，衛星設停利 +10%~15%；等待 VIX < 20 再加碼"))
+                elif _pf_t1 < 50 and _vf_t1 > 25:
+                    _t1_banners.append(("🔴", "#f44336", "#1f0505",
+                        f"衰退訊號：PMI {_pf_t1:.1f} < 50 且 VIX {_vf_t1:.1f} > 25",
+                        "建議【轉入核心資產】（配息/債券型）→ 股 4 債 6 配置"))
+                else:
+                    _t1_banners.append(("⚠️", "#ff9800", "#1f1200",
+                        f"觀望：PMI {_pf_t1:.1f}，VIX {_vf_t1:.1f}",
+                        "維持股 5 債 5 中性配置，等待 PMI 方向確認"))
+            if _ue_t1:
+                try:
+                    _ue_f = float(_ue_t1)
+                    if _ue_f > 4.0:
+                        _fed_v1  = ind.get("FED_RATE", {}).get("value")
+                        _fed_pv1 = ind.get("FED_RATE", {}).get("prev")
+                        _rate_cutting = False
+                        try:
+                            if _fed_v1 and _fed_pv1 and float(_fed_v1) < float(_fed_pv1):
+                                _rate_cutting = True
+                        except: pass
+                        if _rate_cutting:
+                            _t1_banners.append(("🏦", "#9c27b0", "#0d0014",
+                                f"失業率 {_ue_f:.1f}% > 4% ＋ 降息趨勢確立",
+                                "📌 鎖定長年期債券基金（20年期美債等）— 降息→債券價格上漲，鞏固現金流"))
+                        else:
+                            _t1_banners.append(("🔴", "#f44336", "#1f0505",
+                                f"失業率警戒：{_ue_f:.1f}% > 4%（衰退訊號）",
+                                "核心資產為主 → 股 4 債 6，等待 PMI 落底確認"))
+                except: pass
+            if _cpi_t1 and _cpi_pt1:
+                try:
+                    if float(_cpi_t1) > float(_cpi_pt1) and float(_cpi_t1) > 3.0:
+                        _t1_banners.append(("⚠️", "#ff9800", "#1f1200",
+                            f"CPI 升溫：{float(_cpi_t1):.1f}% ↑（升息尾聲觀察期）",
+                            "衛星資產獲利了結 → 股 5 債 5；等待升息暫停訊號"))
+                except: pass
+            for _ic, _cc, _bg, _ttl, _act in _t1_banners:
+                st.markdown(
+                    f"<div style='background:{_bg};border:2px solid {_cc};border-radius:10px;"
+                    f"padding:12px 18px;margin:4px 0'>"
+                    f"<div style='display:flex;align-items:flex-start;gap:12px'>"
+                    f"<span style='font-size:22px;line-height:1'>{_ic}</span>"
+                    f"<div><div style='color:{_cc};font-weight:700;font-size:13px'>{_ttl}</div>"
+                    f"<div style='color:#ccc;font-size:12px;margin-top:4px'>➤ {_act}</div>"
+                    f"</div></div></div>", unsafe_allow_html=True)
+            st.caption("📖 指標說明｜PMI（採購經理人指數）：製造業景氣溫度計，>50=擴張，<50=收縮｜VIX（恐慌指數）：市場恐慌程度，<20=平靜，>30=恐慌，>40=極度恐慌")
 
         # ── ⚠️ 拐點警示 Banner ──────────────────────────────
         trend_arrow  = phase.get("trend_arrow","→")
