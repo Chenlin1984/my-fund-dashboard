@@ -16,6 +16,9 @@ import plotly.graph_objects as go
 import pandas as pd, numpy as np
 
 from macro_engine import fetch_all_indicators, calc_macro_phase, ENGINE_VERSION
+
+# ── 版本戳記：在這裡改版本號 = 確認 app.py 已部署至 Streamlit Cloud
+APP_VERSION = "v17.2_QuadrantEngine"
 from fund_fetcher  import (fetch_fund_by_key, search_moneydj_by_name,
                             fetch_fund_structure, fetch_fund_from_moneydj_url,
                             tdcc_search_fund,
@@ -212,14 +215,9 @@ with st.sidebar:
     st.markdown("## 📊 基金監控 AI 戰情室")
     _sb_upd = st.session_state.get("macro_last_update")
     _sb_upd_str = _sb_upd.strftime("%m/%d %H:%M") if _sb_upd else "未載入"
-    st.caption(f"v17.1 ‧ {_now_tw().strftime('%Y-%m-%d %H:%M')} (TW)")
-    st.caption(f"📡 總經更新：{_sb_upd_str}")
-    # ── 版本戳記（PR 驗證機制：看到這行變更 = GitHub 已部署）
-    st.markdown(
-        f"<div style='background:#0d1117;border:1px solid #30363d;border-radius:6px;"
-        f"padding:5px 10px;font-size:10px;color:#888;text-align:center'>"
-        f"⚙️ Engine: <b style='color:#00c853'>{ENGINE_VERSION}</b></div>",
-        unsafe_allow_html=True)
+    st.caption(f"📡 總經更新：{_sb_upd_str} ‧ {_now_tw().strftime('%m/%d %H:%M')} TW")
+    # ── 版本戳記（看到版本號 = 確認 GitHub 已部署至 Streamlit Cloud）
+    st.info(f"系統版本：{APP_VERSION}\nEngine：{ENGINE_VERSION}")
     st.divider()
 
     # ── API 狀態 ────────────────────────────────────────
@@ -1688,7 +1686,15 @@ with tab1:
             _p2d_col  = _mp2d.get("phase2d_color", "#888")
             _p2d_desc = _mp2d.get("phase2d_desc", "")
             _p2d_conf = _mp2d.get("phase2d_conf", 0)
-            _p2d_icon = {"復甦":"🌱","擴張":"📈","減速":"⚠️","衰退":"🌧️"}.get(_p2d,"🔍")
+            # 說明書 §4：四象限燈號標籤（位階 × 動能）
+            _QUAD_LABEL = {
+                "復甦": ("🔵", "築底 Recovery"),
+                "擴張": ("🟢", "繁榮 Boom"),
+                "減速": ("🟡", "警戒 Slowdown"),
+                "衰退": ("🔴", "衰退 Recession"),
+            }
+            _p2d_ico_raw, _p2d_label = _QUAD_LABEL.get(_p2d, ("🔍", _p2d))
+            _p2d_icon = _p2d_ico_raw
             _p2d_agree = cur_phase in (_p2d,) or \
                          (cur_phase == "擴張" and _p2d == "擴張") or \
                          (cur_phase == "衰退" and _p2d == "衰退")
@@ -1702,7 +1708,7 @@ with tab1:
                 f"<div style='flex:1'>"
                 f"<div style='font-size:10px;color:#666;letter-spacing:1px'>Z-Score × 斜率二維確認</div>"
                 f"<div style='display:flex;align-items:baseline;gap:8px;margin:2px 0'>"
-                f"<span style='font-size:16px;font-weight:900;color:{_p2d_col}'>{_p2d}</span>"
+                f"<span style='font-size:16px;font-weight:900;color:{_p2d_col}'>{_p2d_ico_raw} {_p2d_label}</span>"
                 f"<span style='font-size:11px;color:#888'>{_p2d_desc}</span>"
                 f"</div>"
                 f"<div style='display:flex;align-items:center;gap:6px;margin-top:4px'>"
