@@ -14,6 +14,12 @@ import requests, yfinance as yf, pandas as pd, numpy as np, streamlit as st, mat
 
 FRED_BASE = "https://api.stlouisfed.org/fred/series/observations"
 
+# ── 版本戳記：修改此值 = 確認 GitHub 已更新並部署至 Streamlit Cloud
+ENGINE_VERSION = "v17.1_SlopeEngine"
+
+# ── Self-healing snapshot: 記錄最後一次成功抓取的指標資料
+_INDICATOR_SNAPSHOT: dict = {}
+
 def _fred(sid, key, n=250):
     if not key: return pd.DataFrame()
     try:
@@ -37,6 +43,62 @@ def _yf_s(ticker, period="2y"):
     except Exception as e:
         print(f"[yf_s {ticker}] {e}")
         return pd.Series(dtype=float)
+
+def _calc_z(series: pd.Series, current_val: float) -> float | None:
+    """計算當前值相對於歷史序列的 Z-Score（標準化位置）"""
+    if series is None or len(series) < 12:
+        return None
+    mu = float(series.mean())
+    sigma = float(series.std())
+    if sigma == 0:
+        return 0.0
+    return round((current_val - mu) / sigma, 2)
+
+
+def get_trend_strength(series: pd.Series, window: int = 3) -> float:
+    """
+    Smart Slope v2：非重複有效值回溯（說明書 §2，穿透「假性停滯」）
+    ─────────────────────────────────────────────────────────────
+    當月報指標（PMI、CPI 等）連續數期不更新，tail(3) 取到的是三個相同數值，
+    polyfit 斜率為 0，AI 誤判為「無趨勢」。
+
+    修正：去除連續重複值後取最後 window 個「有效轉折點」，
+    即使當前值已停滯一個月，仍能反映更早期的趨勢方向。
+    邊界保護：window < 2 個不同值時 fallback 至所有可用點。
+    """
+    valid = series.dropna()
+    if len(valid) < 2:
+        return 0.0
+    # 去除連續重複（保留每段值的最後一次出現 → 保留最新的不重複趨勢點）
+    deduped = valid.loc[valid != valid.shift()]
+    if len(deduped) < 2:
+        # 全部相同 → 改用原始序列的最後兩點保持完整性
+        deduped = valid
+    y = deduped.tail(window).values.astype(float)
+    if len(y) < 2:
+        return 0.0
+    x = np.arange(len(y))
+    try:
+        slope, _ = np.polyfit(x, y, 1)
+        return round(float(np.clip(slope, -1e6, 1e6)), 4)
+    except Exception:
+        return 0.0
+
+
+def _calc_days_stale(date_str: str) -> int | None:
+    """計算距離 FRED 最後發布日的天數（用於停滯警示）"""
+    if not date_str or date_str == "即時":
+        return None
+    try:
+        s = str(date_str).strip()[:10]
+        if len(s) == 7:          # "YYYY-MM" → 月底
+            dt = pd.Timestamp(s + "-01") + pd.offsets.MonthEnd(0)
+        else:
+            dt = pd.Timestamp(s)
+        return max(0, (pd.Timestamp.now() - dt).days)
+    except Exception:
+        return None
+
 
 def _trend(vals):
     if len(vals) < 3: return ""
@@ -76,14 +138,33 @@ def _detect_inflection(indicators):
     signals = []; score = 0
     def _chk(key, attr="value"): return indicators.get(key,{}).get(attr)
 
-    pmi_v = _chk("PMI"); pmi_p = _chk("PMI","prev")
-    if pmi_v and pmi_p:
-        if pmi_v < 50 and pmi_v > pmi_p:
-            signals.append({"type":"buy","text":f"PMI {pmi_v:.1f} 收縮區但止跌反彈（+{pmi_v-pmi_p:.1f}）— 復甦訊號"}); score += 2
-        elif pmi_v >= 50 and pmi_v > pmi_p:
-            signals.append({"type":"bull","text":f"PMI {pmi_v:.1f} 擴張且上升"}); score += 1
-        elif pmi_v >= 55 and pmi_v < pmi_p:
-            signals.append({"type":"warn","text":f"PMI {pmi_v:.1f} 高位回落，景氣可能見頂"}); score -= 1
+    # ── PMI（改用線性斜率，解決數據平躺問題）──────────────────
+    pmi_v     = _chk("PMI"); pmi_p = _chk("PMI","prev")
+    pmi_slope = _chk("PMI","trend_slope")  # 由 get_trend_strength() 計算
+    if pmi_v is not None:
+        if pmi_slope is not None:
+            # 斜率判斷（比 diff 更早感知轉折）
+            if pmi_v < 50 and pmi_slope > 0.05:
+                signals.append({"type":"buy",
+                    "text":f"PMI {pmi_v:.1f} 收縮但斜率轉正 +{pmi_slope:.2f}（底部反彈訊號）"}); score += 2
+            elif pmi_v >= 50 and pmi_slope > 0.05:
+                signals.append({"type":"bull",
+                    "text":f"PMI {pmi_v:.1f} 擴張加速（斜率 +{pmi_slope:.2f}）"}); score += 1
+            elif pmi_v >= 50 and pmi_slope < -0.05:
+                # 擴張區但斜率轉負 → 景氣減速拐點（說明書 §2 關鍵判定）
+                signals.append({"type":"warn",
+                    "text":f"⚠️ PMI {pmi_v:.1f} 擴張但加速放緩（斜率 {pmi_slope:.2f}），景氣可能見頂"}); score -= 2
+            elif pmi_v < 50 and pmi_slope < -0.05:
+                signals.append({"type":"warn",
+                    "text":f"PMI {pmi_v:.1f} 收縮且持續惡化（斜率 {pmi_slope:.2f}）"}); score -= 1
+        elif pmi_v and pmi_p:
+            # fallback：無斜率時仍保留原始 diff 比較
+            if pmi_v < 50 and pmi_v > pmi_p:
+                signals.append({"type":"buy","text":f"PMI {pmi_v:.1f} 收縮區止跌反彈（+{pmi_v-pmi_p:.1f}）"}); score += 2
+            elif pmi_v >= 50 and pmi_v > pmi_p:
+                signals.append({"type":"bull","text":f"PMI {pmi_v:.1f} 擴張且上升"}); score += 1
+            elif pmi_v >= 55 and pmi_v < pmi_p:
+                signals.append({"type":"warn","text":f"PMI {pmi_v:.1f} 高位回落，景氣可能見頂"}); score -= 1
 
     y22 = indicators.get("YIELD_10Y2Y",{})
     v22 = y22.get("value"); p22 = y22.get("prev")
@@ -136,7 +217,11 @@ def _detect_inflection(indicators):
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def fetch_all_indicators(fred_api_key):
+def fetch_all_indicators(fred_api_key, cache_date: str = ""):
+    """
+    cache_date: 傳入當日日期字串（YYYY-MM-DD）作為 cache key 的一部分，
+    確保每天自動失效一次，即使 TTL 還沒到期。
+    """
     R = {}
 
     # ── PMI ⭐⭐⭐⭐⭐（最核心，weight=2）─────────────────────────
@@ -407,7 +492,238 @@ def fetch_all_indicators(fred_api_key):
             score=0.5 if v>p else -0.5,
             weight=0.5, series=s)
 
+    # ── Post-process：Z-Score + 線性斜率趨勢 + 停滯天數
+    for _key, _d in R.items():
+        _series = _d.get("series")
+        _val    = _d.get("value")
+        # Z-Score
+        if _val is not None and _series is not None and hasattr(_series, "__len__"):
+            try:
+                _d["z_score"] = _calc_z(_series, float(_val))
+            except Exception:
+                _d["z_score"] = None
+        else:
+            _d["z_score"] = None
+        # 線性斜率（解決月報平躺問題）
+        if _series is not None and hasattr(_series, "dropna"):
+            try:
+                _d["trend_slope"] = get_trend_strength(_series, window=3)
+            except Exception:
+                _d["trend_slope"] = None
+        else:
+            _d["trend_slope"] = None
+        # 停滯天數 + is_stale 旗標（說明書 §2：ffill 後回傳旗標讓 UI 標註新鮮度）
+        _d["days_stale"] = _calc_days_stale(_d.get("date", ""))
+        _d["is_stale"]   = bool(_d["days_stale"] is not None and _d["days_stale"] > 20)
+
+    # ── Self-healing snapshot：若成功取得 ≥5 個指標，更新快照
+    global _INDICATOR_SNAPSHOT
+    if len(R) >= 5:
+        _INDICATOR_SNAPSHOT = {k: {kk: vv for kk, vv in v.items() if kk != "series"}
+                               for k, v in R.items()}  # 快照不含 series（節省記憶體）
+    elif not R and _INDICATOR_SNAPSHOT:
+        # API 全部失敗時回傳最後一次快照並警告
+        st.warning("⚠️ 無法連線 FRED / Yahoo Finance，顯示最後快照資料（數值可能稍舊）")
+        return {k: dict(v) for k, v in _INDICATOR_SNAPSHOT.items()}
+
     return R
+
+
+def get_market_phase(indicators: dict) -> dict:
+    """
+    二維景氣位階判定（說明書 §3）：Z-Score 位階 × 線性斜率方向
+    ─────────────────────────────────────────────────────────────
+    以 PMI 為主要代表指標（最高權重領先指標），結合 Z-Score 與 trend_slope：
+
+      復甦 (Recovery) : Z 低位(< -0.5) + Slope 轉正(> +0.05)
+      擴張 (Expansion): Z 中位         + Slope 為正(> 0)
+      減速 (Slowdown) : Z 高位(> +0.5) + Slope 轉負(< -0.05) ← 關鍵拐點
+      衰退 (Recession): Z 低位         + Slope 為負(< 0)
+
+    回傳字典可直接補充至 calc_macro_phase() 輸出，作為第二層確認。
+    """
+    def _get(key, attr): return (indicators.get(key) or {}).get(attr)
+
+    # ── 以 PMI + YIELD_10Y2Y + HY_SPREAD 三個領先指標投票
+    _phases = []
+    for _key in ("PMI", "YIELD_10Y2Y", "HY_SPREAD"):
+        _z  = _get(_key, "z_score")
+        _sl = _get(_key, "trend_slope")
+        if _z is None or _sl is None:
+            continue
+        # 反向指標（HY 利差越大越壞）
+        _inv = -1 if _key == "HY_SPREAD" else 1
+        _z_adj  = _z  * _inv
+        _sl_adj = _sl * _inv
+
+        if _z_adj < -0.5 and _sl_adj > 0.05:
+            _phases.append("復甦")
+        elif _z_adj > 0.5 and _sl_adj < -0.05:
+            _phases.append("減速")   # 最重要的高位轉負訊號
+        elif _sl_adj > 0:
+            _phases.append("擴張")
+        else:
+            _phases.append("衰退")
+
+    if not _phases:
+        return {"phase2d": "未知", "phase2d_color": "#888", "phase2d_desc": "資料不足"}
+
+    # 多數決
+    from collections import Counter
+    _winner = Counter(_phases).most_common(1)[0][0]
+    _vote_ratio = Counter(_phases).most_common(1)[0][1] / len(_phases)
+
+    _map = {
+        "復甦": ("#64b5f6", "Z 低位 + 斜率翻正，景氣底部確認，逢低布局機會"),
+        "擴張": ("#00c853", "Z 中位 + 斜率向上，成長動能充足，持有風險資產"),
+        "減速": ("#ff9800", "Z 高位 + 斜率轉負，擴張減速拐點！考慮調降衛星比重"),
+        "衰退": ("#f44336", "Z 低位 + 斜率向下，景氣收縮，轉向防禦配置"),
+    }
+    _color, _desc = _map.get(_winner, ("#888", ""))
+    return {
+        "phase2d":        _winner,
+        "phase2d_color":  _color,
+        "phase2d_desc":   _desc,
+        "phase2d_votes":  dict(Counter(_phases)),
+        "phase2d_conf":   round(_vote_ratio * 100),
+    }
+
+
+def get_synced_dashboard_data(raw_data_dict: dict, lookback_days: int = 30) -> pd.DataFrame:
+    """
+    數據對齊補丁 v1：統一時間軸 + 假日前向填充（文件建議 §2）
+    1. 建立完整日曆時間索引
+    2. 自動填充假日空值（前向填充，上限 5 天）
+    3. 若仍有空值 → 資料嚴重斷連，透過 Streamlit 警告
+    """
+    full_idx = pd.date_range(
+        end=pd.Timestamp.now().normalize(), periods=lookback_days, freq='D'
+    )
+    main_df = pd.DataFrame(index=full_idx)
+
+    for name, data in raw_data_dict.items():
+        if isinstance(data, pd.Series):
+            s = data.copy()
+        elif isinstance(data, (list,)):
+            s = pd.Series(data)
+        else:
+            continue
+        s.index = pd.to_datetime(s.index).normalize()
+        main_df[name] = s
+
+    # 核心修正：前向填充假日數據，限制回溯 5 天
+    main_df = main_df.ffill(limit=5)
+
+    # 若仍有空值，代表數據嚴重斷連
+    if main_df.iloc[-1].isnull().any():
+        missing = main_df.columns[main_df.iloc[-1].isnull()].tolist()
+        st.warning(f"⚠️ 部分數據源連線不穩：{', '.join(missing)}，請檢查網路或 API 配額")
+
+    return main_df
+
+
+def calc_growth_inflation_axis(indicators: dict) -> dict:
+    """
+    成長/通膨雙軸分析（文件建議 §1：二象限循環判定）
+    ─────────────────────────────────────────────────
+    Growth Axis  : PMI, 殖利率曲線, M2, 市場廣度, 消費者信心, 初領失業金, 銅博士
+    Inflation Axis: CPI, PPI, Fed Rate
+    ─────────────────────────────────────────────────
+    四象限:
+      復甦/擴張 (Goldilocks): 成長↑ 通膨↓
+      過熱 (Overheat)       : 成長↑ 通膨↑
+      滯脹 (Stagflation)    : 成長↓ 通膨↑
+      衰退 (Recession)      : 成長↓ 通膨↓
+    """
+    def _get(key, attr="value"):
+        return (indicators.get(key) or {}).get(attr)
+
+    # ── Growth signals（正=成長向上，負=成長向下）
+    growth_signals = []
+    pmi_v = _get("PMI")
+    if pmi_v is not None:
+        growth_signals.append(1 if pmi_v >= 50 else -1)
+
+    y22 = _get("YIELD_10Y2Y")
+    if y22 is not None:
+        growth_signals.append(1 if y22 >= 0 else -1)
+
+    m2_v = _get("M2")
+    if m2_v is not None:
+        growth_signals.append(1 if m2_v >= 3 else -1)
+
+    adl_chg = _get("ADL", "prev")  # prev = monthly change %
+    if adl_chg is not None:
+        growth_signals.append(1 if adl_chg >= 0 else -1)
+
+    conf_v = _get("CONSUMER_CONF")
+    if conf_v is not None:
+        growth_signals.append(1 if conf_v >= 70 else -1)
+
+    jobless_v = _get("JOBLESS")
+    if jobless_v is not None:
+        growth_signals.append(1 if jobless_v < 280000 else -1)
+
+    copper_v = _get("COPPER")  # monthly change %
+    if copper_v is not None:
+        growth_signals.append(1 if copper_v >= 0 else -1)
+
+    # ── Inflation signals（正=通膨偏高，負=通膨受控）
+    inflation_signals = []
+    cpi_v = _get("CPI")
+    if cpi_v is not None:
+        inflation_signals.append(1 if cpi_v >= 3.0 else -1)
+
+    ppi_v = _get("PPI")
+    if ppi_v is not None:
+        inflation_signals.append(1 if ppi_v >= 3.0 else -1)
+
+    fed_v = _get("FED_RATE")
+    if fed_v is not None:
+        inflation_signals.append(1 if fed_v >= 4.0 else -1)
+
+    # ── 計算平均訊號分數（-1 ~ +1）
+    growth_score    = sum(growth_signals)    / max(len(growth_signals), 1)
+    inflation_score = sum(inflation_signals) / max(len(inflation_signals), 1)
+    growth_up    = growth_score > 0
+    inflation_up = inflation_score > 0
+
+    # ── 四象限映射
+    if growth_up and not inflation_up:
+        quadrant    = "復甦/擴張"; quadrant_en = "Goldilocks"
+        quad_color  = "#00c853";   quad_icon   = "🌱"
+        quad_desc   = "成長↑ 通膨↓ — 黃金期，積極持有風險資產"
+        quad_alloc  = "衛星成長型↑  核心配息↑  現金↓"
+    elif growth_up and inflation_up:
+        quadrant    = "過熱";      quadrant_en = "Overheat"
+        quad_color  = "#ff9800";   quad_icon   = "🔥"
+        quad_desc   = "成長↑ 通膨↑ — 景氣高峰，注意泡沫與緊縮風險"
+        quad_alloc  = "實物資產↑  高息防禦↑  成長型↓"
+    elif not growth_up and inflation_up:
+        quadrant    = "滯脹";      quadrant_en = "Stagflation"
+        quad_color  = "#f44336";   quad_icon   = "⚠️"
+        quad_desc   = "成長↓ 通膨↑ — 最惡劣環境，降低股票，持有商品與短債"
+        quad_alloc  = "商品/黃金↑  短天期債↑  成長股↓↓"
+    else:
+        quadrant    = "衰退";      quadrant_en = "Recession"
+        quad_color  = "#ff9800";   quad_icon   = "🌧️"
+        quad_desc   = "成長↓ 通膨↓ — 景氣收縮，轉向長債與防禦型配置"
+        quad_alloc  = "長天期債↑↑  防禦股息↑  現金↑  成長股↓"
+
+    return {
+        "growth_score":     round(growth_score, 2),
+        "inflation_score":  round(inflation_score, 2),
+        "growth_up":        growth_up,
+        "inflation_up":     inflation_up,
+        "quadrant":         quadrant,
+        "quadrant_en":      quadrant_en,
+        "quad_color":       quad_color,
+        "quad_icon":        quad_icon,
+        "quad_desc":        quad_desc,
+        "quad_alloc":       quad_alloc,
+        "n_growth":         len(growth_signals),
+        "n_inflation":      len(inflation_signals),
+    }
 
 
 def calc_macro_phase(indicators: dict) -> dict:
@@ -565,6 +881,11 @@ def calc_macro_phase(indicators: dict) -> dict:
     )
     _w_icon, _w_label, _w_color, _w_alloc_str = _weather_tup
 
+    # 成長/通膨雙軸分析（文件建議 §1 二象限循環判定）
+    growth_inflation = calc_growth_inflation_axis(indicators)
+    # Z-Score × Slope 二維景氣位階（說明書 §3）
+    market_phase_2d  = get_market_phase(indicators)
+
     return dict(
         score=score, phase=phase, phase_en=phase_en,
         phase_color=phase_color, alloc=alloc,
@@ -580,6 +901,9 @@ def calc_macro_phase(indicators: dict) -> dict:
         trend_label=trend_label,
         trend_color=trend_color,
         alloc_transition=alloc_transition,
+        # 雙軸分析
+        growth_inflation=growth_inflation,
+        market_phase_2d=market_phase_2d,
         # 保留舊 key 供 AI engine 使用
         inflection=mk_signals.get("inflection",{}),
         signals=mk_signals.get("signals",[]),

@@ -15,7 +15,10 @@ def _now_tw():
 import plotly.graph_objects as go
 import pandas as pd, numpy as np
 
-from macro_engine import fetch_all_indicators, calc_macro_phase
+from macro_engine import fetch_all_indicators, calc_macro_phase, ENGINE_VERSION
+
+# ── 版本戳記：在這裡改版本號 = 確認 app.py 已部署至 Streamlit Cloud
+APP_VERSION = "v17.2_QuadrantEngine"
 from fund_fetcher  import (fetch_fund_by_key, search_moneydj_by_name,
                             fetch_fund_structure, fetch_fund_from_moneydj_url,
                             tdcc_search_fund,
@@ -212,8 +215,9 @@ with st.sidebar:
     st.markdown("## 📊 基金監控 AI 戰情室")
     _sb_upd = st.session_state.get("macro_last_update")
     _sb_upd_str = _sb_upd.strftime("%m/%d %H:%M") if _sb_upd else "未載入"
-    st.caption(f"v16.0 ‧ {_now_tw().strftime('%Y-%m-%d %H:%M')} (TW)")
-    st.caption(f"📡 總經更新：{_sb_upd_str}")
+    st.caption(f"📡 總經更新：{_sb_upd_str} ‧ {_now_tw().strftime('%m/%d %H:%M')} TW")
+    # ── 版本戳記（看到版本號 = 確認 GitHub 已部署至 Streamlit Cloud）
+    st.info(f"系統版本：{APP_VERSION}\nEngine：{ENGINE_VERSION}")
     st.divider()
 
     # ── API 狀態 ────────────────────────────────────────
@@ -221,6 +225,18 @@ with st.sidebar:
         f"{'✅' if FRED_KEY else '❌'} FRED　　"
         f"{'✅' if GEMINI_KEY else '❌'} Gemini"
     )
+
+    # ── PR 級別重整按鈕（說明書 §3：st.cache_data + st.cache_resource 全清）
+    if st.button("♻️ PR 級別重整（強制清除快照）", use_container_width=True,
+                 help="清除 cache_data + cache_resource，確保載入 GitHub 最新邏輯。完成後請手動 F5 重整網頁。"):
+        st.cache_data.clear()
+        st.cache_resource.clear()
+        st.session_state["macro_done"]        = False
+        st.session_state["indicators"]        = {}
+        st.session_state["phase_info"]        = {}
+        st.session_state["macro_last_update"] = None
+        st.success(f"✅ 快取已全清！Engine: {ENGINE_VERSION} — 請按 F5 重整網頁載入最新邏輯。")
+        st.rerun()
     st.divider()
 
     # ── 核心/衛星目標 ────────────────────────────────────
@@ -555,6 +571,48 @@ def _render_macro_dashboard(ind, phase_info):
             <div style='color:#69f0ae;font-size:11px;margin-top:8px;line-height:1.6'>{advice}</div>
             </div>""", unsafe_allow_html=True)
 
+    # ── 成長/通膨雙軸象限顯示（文件建議 §1）─────────────────────
+    _gi = phase_info.get("growth_inflation", {})
+    if _gi:
+        _quad       = _gi.get("quadrant", "")
+        _quad_en    = _gi.get("quadrant_en", "")
+        _qcol       = _gi.get("quad_color", "#888")
+        _qico       = _gi.get("quad_icon", "")
+        _qdesc      = _gi.get("quad_desc", "")
+        _qalloc     = _gi.get("quad_alloc", "")
+        _gs         = _gi.get("growth_score", 0)
+        _is         = _gi.get("inflation_score", 0)
+        _g_bar_w    = int(max(0, min(100, (_gs + 1) / 2 * 100)))
+        _i_bar_w    = int(max(0, min(100, (_is + 1) / 2 * 100)))
+        _g_bar_col  = "#00c853" if _gs > 0 else "#f44336"
+        _i_bar_col  = "#f44336" if _is > 0 else "#00c853"
+        st.markdown(
+            f"<div style='background:#0a1628;border:1px solid {_qcol};"
+            f"border-radius:12px;padding:14px 18px;margin:8px 0;"
+            f"display:flex;align-items:center;gap:16px'>"
+            f"<div style='font-size:28px;line-height:1'>{_qico}</div>"
+            f"<div style='flex:1'>"
+            f"<div style='font-size:11px;color:#888;letter-spacing:1px;margin-bottom:4px'>"
+            f"成長/通膨雙軸分析 | Growth-Inflation Matrix</div>"
+            f"<div style='display:flex;align-items:baseline;gap:8px;margin-bottom:6px'>"
+            f"<span style='font-size:18px;font-weight:900;color:{_qcol}'>{_quad}</span>"
+            f"<span style='font-size:12px;color:#666'>{_quad_en}</span>"
+            f"<span style='font-size:12px;color:{_qcol};margin-left:4px'>{_qdesc}</span>"
+            f"</div>"
+            f"<div style='display:flex;gap:20px'>"
+            f"<div style='flex:1'><div style='font-size:10px;color:#888;margin-bottom:2px'>"
+            f"成長訊號 ({'+' if _gs>0 else ''}{_gs:.2f})</div>"
+            f"<div style='background:#161b22;border-radius:3px;height:6px'>"
+            f"<div style='background:{_g_bar_col};width:{_g_bar_w}%;height:100%;border-radius:3px'></div></div></div>"
+            f"<div style='flex:1'><div style='font-size:10px;color:#888;margin-bottom:2px'>"
+            f"通膨訊號 ({'+' if _is>0 else ''}{_is:.2f})</div>"
+            f"<div style='background:#161b22;border-radius:3px;height:6px'>"
+            f"<div style='background:{_i_bar_col};width:{_i_bar_w}%;height:100%;border-radius:3px'></div></div></div>"
+            f"</div>"
+            f"<div style='font-size:10px;color:#aaa;margin-top:6px'>建議調整：{_qalloc}</div>"
+            f"</div></div>",
+            unsafe_allow_html=True)
+
     # ══════════════════════════════════════════════════════════════
     # v16.0 Task 1: 總經紅綠燈 — VIX>30 / 深度倒掛強制警告
     # ══════════════════════════════════════════════════════════════
@@ -793,6 +851,45 @@ def _render_macro_dashboard(ind, phase_info):
             _n  = d.get("name","")
             _vf = (f"{v:,.0f}" if isinstance(v,float) and abs(v)>=1000 else
                    f"{v:.2f}" if isinstance(v,float) else str(v) if v is not None else "—")
+            # Z-Score badge
+            _z  = d.get("z_score")
+            _zhtml = ""
+            if _z is not None:
+                _zc = "#f44336" if _z > 1.5 else ("#00c853" if _z < -1.5 else "#888")
+                _zlbl = "過熱" if _z > 1.5 else ("低估" if _z < -1.5 else "中性")
+                _zhtml = (f'<span style="background:#1a1a2e;color:{_zc};'
+                          f'font-size:9px;padding:1px 5px;border-radius:8px;'
+                          f'border:1px solid {_zc};margin-left:4px" '
+                          f'title="Z-Score = {_z}（相對2年均值的標準差位置）">'
+                          f'Z={_z:+.1f} {_zlbl}</span>')
+            # 趨勢斜率 badge（解決月報平躺問題，改用 np.polyfit 斜率）
+            _slope = d.get("trend_slope")
+            _stale = d.get("days_stale")
+            _slope_html = ""
+            if _slope is not None:
+                _abs_s = abs(_slope)
+                if _abs_s < 0.005:
+                    _slope_html = '<span style="color:#555;font-size:9px;margin-left:4px">▬ 平穩</span>'
+                elif _slope > 0:
+                    _sc = "#00c853" if _abs_s > 0.1 else "#69f0ae"
+                    _slope_html = (f'<span style="color:{_sc};font-size:9px;margin-left:4px">'
+                                   f'⚡ 加速↑ +{_slope:.3f}</span>')
+                else:
+                    _sc = "#f44336" if _abs_s > 0.1 else "#ff7043"
+                    _slope_html = (f'<span style="color:{_sc};font-size:9px;margin-left:4px">'
+                                   f'⚡ 加速↓ {_slope:.3f}</span>')
+            # 停滯天數 badge
+            _stale_html = ""
+            if _stale is not None:
+                if _stale > 45:
+                    _stale_html = (f'<span style="color:#f44336;font-size:9px;margin-left:4px">'
+                                   f'⚠️ 停滯 {_stale}天</span>')
+                elif _stale > 20:
+                    _stale_html = (f'<span style="color:#ff9800;font-size:9px;margin-left:4px">'
+                                   f'⚠️ {_stale}天前</span>')
+                else:
+                    _stale_html = (f'<span style="color:#555;font-size:9px;margin-left:4px">'
+                                   f'📅 {_stale}天前</span>')
             _h  = (f'<div style="background:#0d1117;border:1px solid #21262d;border-radius:10px;'
                    f'padding:12px 14px;margin-bottom:8px;min-height:88px">'
                    f'<div style="display:flex;justify-content:space-between;align-items:flex-start">'
@@ -800,11 +897,14 @@ def _render_macro_dashboard(ind, phase_info):
                    f'<div style="color:#888;font-size:10px">{typ} {stars} (w={w})</div>'
                    f'<div style="color:#c9d1d9;font-size:12px;font-weight:600">{_n}</div>'
                    f'</div>{spark_html}</div>'
-                   f'<div style="display:flex;align-items:baseline;gap:6px;margin-top:4px">'
+                   f'<div style="display:flex;align-items:baseline;gap:6px;margin-top:4px;flex-wrap:wrap">'
                    f'<span style="color:{col};font-size:22px;font-weight:800">{_vf}</span>'
                    f'<span style="color:#555;font-size:11px">{unit}</span>'
                    f'{diff_str}'
                    f'<span style="font-size:16px;margin-left:4px">{sig}</span>'
+                   f'{_zhtml}'
+                   f'{_slope_html}'
+                   f'{_stale_html}'
                    f'</div>'
                    f'<div style="color:#555;font-size:10px;margin-top:2px;line-height:1.4">{desc}</div>'
                    f'</div>')
@@ -1376,73 +1476,6 @@ with tab1:
     st.markdown("## 🌐 總經位階評估 ＆ 拐點偵測")
     st.caption("MK（郭俊宏）三層指標加權方法論 v7 — 領先×2 | 中級×1 | 次級×0.5")
 
-    # ── v10.4 PMI/VIX 總經自動標籤 Banner ───────────────────────
-    _ind_t1 = st.session_state.get("indicators", {})
-    _pmi_t1 = _ind_t1.get("PMI", {}).get("value")
-    _vix_t1 = _ind_t1.get("VIX", {}).get("value")
-    _ue_t1  = _ind_t1.get("UNEMPLOYMENT", {}).get("value")
-    _cpi_t1 = _ind_t1.get("CPI", {}).get("value")
-    _cpi_pt1= _ind_t1.get("CPI", {}).get("prev")
-    if _pmi_t1 or _vix_t1 or _ue_t1:
-        _t1_banners = []
-        if _pmi_t1 and _vix_t1:
-            _pf_t1 = float(_pmi_t1); _vf_t1 = float(_vix_t1)
-            if _pf_t1 > 50 and _vf_t1 < 20:
-                _t1_banners.append(("🚀", "#00c853", "#071a0f",
-                    f"復甦/擴張訊號：PMI {_pf_t1:.1f} > 50 且 VIX {_vf_t1:.1f} < 20",
-                    "建議【加碼衛星資產】（成長基金）→ 股 7 債 3 配置"))
-            elif _pf_t1 > 50:
-                _t1_banners.append(("📈", "#69f0ae", "#071a10",
-                    f"景氣擴張但波動偏高：PMI {_pf_t1:.1f} > 50，VIX {_vf_t1:.1f} ≥ 20",
-                    "維持持有，衛星設停利 +10%~15%；等待 VIX < 20 再加碼"))
-            elif _pf_t1 < 50 and _vf_t1 > 25:
-                _t1_banners.append(("🔴", "#f44336", "#1f0505",
-                    f"衰退訊號：PMI {_pf_t1:.1f} < 50 且 VIX {_vf_t1:.1f} > 25",
-                    "建議【轉入核心資產】（配息/債券型）→ 股 4 債 6 配置"))
-            else:
-                _t1_banners.append(("⚠️", "#ff9800", "#1f1200",
-                    f"觀望：PMI {_pf_t1:.1f}，VIX {_vf_t1:.1f}",
-                    "維持股 5 債 5 中性配置，等待 PMI 方向確認"))
-        if _ue_t1:
-            try:
-                _ue_f = float(_ue_t1)
-                if _ue_f > 4.0:
-                    # v10.4: 判斷是否已進入降息通道（FED_RATE 下滑）
-                    _fed_v1  = _ind_t1.get("FED_RATE", {}).get("value")
-                    _fed_pv1 = _ind_t1.get("FED_RATE", {}).get("prev")
-                    _rate_cutting = False
-                    try:
-                        if _fed_v1 and _fed_pv1 and float(_fed_v1) < float(_fed_pv1):
-                            _rate_cutting = True
-                    except: pass
-                    if _rate_cutting:
-                        _t1_banners.append(("🏦", "#9c27b0", "#0d0014",
-                            f"失業率 {_ue_f:.1f}% > 4% ＋ 降息趨勢確立",
-                            "📌 鎖定長年期債券基金（20年期美債等）— 降息→債券價格上漲，鞏固現金流"))
-                    else:
-                        _t1_banners.append(("🔴", "#f44336", "#1f0505",
-                            f"失業率警戒：{_ue_f:.1f}% > 4%（衰退訊號）",
-                            "核心資產為主 → 股 4 債 6，等待 PMI 落底確認"))
-            except: pass
-        if _cpi_t1 and _cpi_pt1:
-            try:
-                if float(_cpi_t1) > float(_cpi_pt1) and float(_cpi_t1) > 3.0:
-                    _t1_banners.append(("⚠️", "#ff9800", "#1f1200",
-                        f"CPI 升溫：{float(_cpi_t1):.1f}% ↑（升息尾聲觀察期）",
-                        "衛星資產獲利了結 → 股 5 債 5；等待升息暫停訊號"))
-            except: pass
-        for _ic, _cc, _bg, _ttl, _act in _t1_banners:
-            st.markdown(
-                f"<div style='background:{_bg};border:2px solid {_cc};border-radius:10px;"
-                f"padding:12px 18px;margin:4px 0'>"
-                f"<div style='display:flex;align-items:flex-start;gap:12px'>"
-                f"<span style='font-size:22px;line-height:1'>{_ic}</span>"
-                f"<div><div style='color:{_cc};font-weight:700;font-size:13px'>{_ttl}</div>"
-                f"<div style='color:#ccc;font-size:12px;margin-top:4px'>➤ {_act}</div>"
-                f"</div></div></div>", unsafe_allow_html=True)
-        st.caption("📖 指標說明｜PMI（採購經理人指數）：製造業景氣溫度計，>50=擴張，<50=收縮｜VIX（恐慌指數）：市場恐慌程度，<20=平靜，>30=恐慌，>40=極度恐慌")
-        
-
     FRED_KEY, GEMINI_KEY = _load_keys()
     if not FRED_KEY:
         st.warning("⚠️ 請在 Cell 1 填入 FRED_API_KEY")
@@ -1471,7 +1504,8 @@ with tab1:
             fetch_all_indicators.clear()
         if _btn_clicked or _auto_load:
             with st.spinner("📡 從 FRED / Yahoo Finance 抓取最新指標..."):
-                ind   = fetch_all_indicators(FRED_KEY)
+                # 傳入今日日期作為 cache key，確保每天自動失效一次
+                ind   = fetch_all_indicators(FRED_KEY, cache_date=datetime.date.today().isoformat())
                 phase = calc_macro_phase(ind)
                 old_phase = st.session_state.phase_info.get("phase","") if st.session_state.phase_info else ""
                 new_phase = phase.get("phase","")
@@ -1503,6 +1537,70 @@ with tab1:
     else:
         ind   = st.session_state.indicators
         phase = st.session_state.phase_info
+
+        # ── v10.4 PMI/VIX 總經自動標籤 Banner（移至 fetch 之後，確保使用新鮮資料）
+        _pmi_t1  = ind.get("PMI", {}).get("value")
+        _vix_t1  = ind.get("VIX", {}).get("value")
+        _ue_t1   = ind.get("UNEMPLOYMENT", {}).get("value")
+        _cpi_t1  = ind.get("CPI", {}).get("value")
+        _cpi_pt1 = ind.get("CPI", {}).get("prev")
+        if _pmi_t1 or _vix_t1 or _ue_t1:
+            _t1_banners = []
+            if _pmi_t1 and _vix_t1:
+                _pf_t1 = float(_pmi_t1); _vf_t1 = float(_vix_t1)
+                if _pf_t1 > 50 and _vf_t1 < 20:
+                    _t1_banners.append(("🚀", "#00c853", "#071a0f",
+                        f"復甦/擴張訊號：PMI {_pf_t1:.1f} > 50 且 VIX {_vf_t1:.1f} < 20",
+                        "建議【加碼衛星資產】（成長基金）→ 股 7 債 3 配置"))
+                elif _pf_t1 > 50:
+                    _t1_banners.append(("📈", "#69f0ae", "#071a10",
+                        f"景氣擴張但波動偏高：PMI {_pf_t1:.1f} > 50，VIX {_vf_t1:.1f} ≥ 20",
+                        "維持持有，衛星設停利 +10%~15%；等待 VIX < 20 再加碼"))
+                elif _pf_t1 < 50 and _vf_t1 > 25:
+                    _t1_banners.append(("🔴", "#f44336", "#1f0505",
+                        f"衰退訊號：PMI {_pf_t1:.1f} < 50 且 VIX {_vf_t1:.1f} > 25",
+                        "建議【轉入核心資產】（配息/債券型）→ 股 4 債 6 配置"))
+                else:
+                    _t1_banners.append(("⚠️", "#ff9800", "#1f1200",
+                        f"觀望：PMI {_pf_t1:.1f}，VIX {_vf_t1:.1f}",
+                        "維持股 5 債 5 中性配置，等待 PMI 方向確認"))
+            if _ue_t1:
+                try:
+                    _ue_f = float(_ue_t1)
+                    if _ue_f > 4.0:
+                        _fed_v1  = ind.get("FED_RATE", {}).get("value")
+                        _fed_pv1 = ind.get("FED_RATE", {}).get("prev")
+                        _rate_cutting = False
+                        try:
+                            if _fed_v1 and _fed_pv1 and float(_fed_v1) < float(_fed_pv1):
+                                _rate_cutting = True
+                        except: pass
+                        if _rate_cutting:
+                            _t1_banners.append(("🏦", "#9c27b0", "#0d0014",
+                                f"失業率 {_ue_f:.1f}% > 4% ＋ 降息趨勢確立",
+                                "📌 鎖定長年期債券基金（20年期美債等）— 降息→債券價格上漲，鞏固現金流"))
+                        else:
+                            _t1_banners.append(("🔴", "#f44336", "#1f0505",
+                                f"失業率警戒：{_ue_f:.1f}% > 4%（衰退訊號）",
+                                "核心資產為主 → 股 4 債 6，等待 PMI 落底確認"))
+                except: pass
+            if _cpi_t1 and _cpi_pt1:
+                try:
+                    if float(_cpi_t1) > float(_cpi_pt1) and float(_cpi_t1) > 3.0:
+                        _t1_banners.append(("⚠️", "#ff9800", "#1f1200",
+                            f"CPI 升溫：{float(_cpi_t1):.1f}% ↑（升息尾聲觀察期）",
+                            "衛星資產獲利了結 → 股 5 債 5；等待升息暫停訊號"))
+                except: pass
+            for _ic, _cc, _bg, _ttl, _act in _t1_banners:
+                st.markdown(
+                    f"<div style='background:{_bg};border:2px solid {_cc};border-radius:10px;"
+                    f"padding:12px 18px;margin:4px 0'>"
+                    f"<div style='display:flex;align-items:flex-start;gap:12px'>"
+                    f"<span style='font-size:22px;line-height:1'>{_ic}</span>"
+                    f"<div><div style='color:{_cc};font-weight:700;font-size:13px'>{_ttl}</div>"
+                    f"<div style='color:#ccc;font-size:12px;margin-top:4px'>➤ {_act}</div>"
+                    f"</div></div></div>", unsafe_allow_html=True)
+            st.caption("📖 指標說明｜PMI（採購經理人指數）：製造業景氣溫度計，>50=擴張，<50=收縮｜VIX（恐慌指數）：市場恐慌程度，<20=平靜，>30=恐慌，>40=極度恐慌")
 
         # ── ⚠️ 拐點警示 Banner ──────────────────────────────
         trend_arrow  = phase.get("trend_arrow","→")
@@ -1581,8 +1679,83 @@ with tab1:
             f"</div></div>",
             unsafe_allow_html=True)
 
+        # ── Z-Score × Slope 二維景氣確認卡（說明書 §3 get_market_phase）
+        _mp2d = phase.get("market_phase_2d", {})
+        if _mp2d and _mp2d.get("phase2d","") != "未知":
+            _p2d      = _mp2d.get("phase2d", "")
+            _p2d_col  = _mp2d.get("phase2d_color", "#888")
+            _p2d_desc = _mp2d.get("phase2d_desc", "")
+            _p2d_conf = _mp2d.get("phase2d_conf", 0)
+            # 說明書 §4：四象限燈號標籤（位階 × 動能）
+            _QUAD_LABEL = {
+                "復甦": ("🔵", "築底 Recovery"),
+                "擴張": ("🟢", "繁榮 Boom"),
+                "減速": ("🟡", "警戒 Slowdown"),
+                "衰退": ("🔴", "衰退 Recession"),
+            }
+            _p2d_ico_raw, _p2d_label = _QUAD_LABEL.get(_p2d, ("🔍", _p2d))
+            _p2d_icon = _p2d_ico_raw
+            _p2d_agree = cur_phase in (_p2d,) or \
+                         (cur_phase == "擴張" and _p2d == "擴張") or \
+                         (cur_phase == "衰退" and _p2d == "衰退")
+            _conf_bar_w = _p2d_conf
+            _conf_bar_c = "#00c853" if _p2d_conf >= 67 else "#ff9800"
+            st.markdown(
+                f"<div style='background:#0a1628;border:1px solid {_p2d_col};border-left:4px solid {_p2d_col};"
+                f"border-radius:10px;padding:12px 16px;margin:6px 0;"
+                f"display:flex;align-items:center;gap:14px'>"
+                f"<div style='font-size:22px'>{_p2d_icon}</div>"
+                f"<div style='flex:1'>"
+                f"<div style='font-size:10px;color:#666;letter-spacing:1px'>Z-Score × 斜率二維確認</div>"
+                f"<div style='display:flex;align-items:baseline;gap:8px;margin:2px 0'>"
+                f"<span style='font-size:16px;font-weight:900;color:{_p2d_col}'>{_p2d_ico_raw} {_p2d_label}</span>"
+                f"<span style='font-size:11px;color:#888'>{_p2d_desc}</span>"
+                f"</div>"
+                f"<div style='display:flex;align-items:center;gap:6px;margin-top:4px'>"
+                f"<span style='font-size:10px;color:#666'>信心度</span>"
+                f"<div style='flex:1;background:#161b22;border-radius:3px;height:5px'>"
+                f"<div style='background:{_conf_bar_c};width:{_conf_bar_w}%;height:100%;border-radius:3px'></div></div>"
+                f"<span style='font-size:10px;color:{_conf_bar_c}'>{_p2d_conf}%</span>"
+                f"<span style='font-size:10px;color:{'#00c853' if _p2d_agree else '#ff9800'};margin-left:8px'>"
+                f"{'✅ 與加權評分一致' if _p2d_agree else '⚠️ 與加權評分分歧，請留意'}</span>"
+                f"</div></div></div>",
+                unsafe_allow_html=True)
+
         _render_macro_dashboard(ind, phase)
 
+        # ── TAA 戰術配置警告（文件建議 §3：連動持倉）─────────────
+        _pf_taa     = st.session_state.get("portfolio_funds", [])
+        _total_taa  = sum(f.get("invest_twd", 0) or 0 for f in _pf_taa)
+        _phase_alloc= phase.get("alloc", {})
+        _rec_stock  = _phase_alloc.get("股票", 50)
+        _rec_bond   = _phase_alloc.get("債券", 40)
+        if _total_taa > 0 and _phase_alloc:
+            _sat_taa = sum(f.get("invest_twd", 0) or 0 for f in _pf_taa if not f.get("is_core"))
+            _sat_pct = round(_sat_taa / _total_taa * 100, 1)
+            _deviation = _sat_pct - _rec_stock
+            if abs(_deviation) >= 20:
+                if _deviation > 0:
+                    st.markdown(
+                        f"<div style='background:linear-gradient(135deg,#2a1000,#1f0a00);"
+                        f"border:1.5px solid #ff9800;border-radius:10px;"
+                        f"padding:12px 16px;margin:8px 0'>"
+                        f"<span style='color:#ff9800;font-weight:700'>⚠️ TAA 配置警告</span>"
+                        f"<span style='color:#ccc;font-size:13px;margin-left:8px'>"
+                        f"衛星（成長/股票型）佔比 <b style='color:#ff9800'>{_sat_pct}%</b>，"
+                        f"高於 {cur_phase}期建議股票 <b>{_rec_stock}%</b>（偏高 {abs(_deviation):.0f}%）"
+                        f"— 建議逐步減碼衛星，增加投資等級債或現金部位</span></div>",
+                        unsafe_allow_html=True)
+                else:
+                    st.markdown(
+                        f"<div style='background:linear-gradient(135deg,#001a0a,#0a1f00);"
+                        f"border:1.5px solid #69f0ae;border-radius:10px;"
+                        f"padding:12px 16px;margin:8px 0'>"
+                        f"<span style='color:#69f0ae;font-weight:700'>💡 TAA 配置提示</span>"
+                        f"<span style='color:#ccc;font-size:13px;margin-left:8px'>"
+                        f"衛星（成長/股票型）佔比 <b style='color:#69f0ae'>{_sat_pct}%</b>，"
+                        f"低於 {cur_phase}期建議股票 <b>{_rec_stock}%</b>（低於 {abs(_deviation):.0f}%）"
+                        f"— 景氣仍在擴張，可適度加碼衛星成長型資產</span></div>",
+                        unsafe_allow_html=True)
 
         # ── 台灣市場水溫計（v15 TPI）────────────────────────────
     with st.expander("🇹🇼 台灣市場水溫計（TPI 三因子轉折指標）", expanded=False):
@@ -2005,7 +2178,7 @@ with tab3:
                 "<div style='margin:6px 0;padding:10px 16px;border-radius:8px;"
                 "background:#0d1117;border:1px solid #30363d;text-align:center'>"
                 "<div style='color:#888;font-size:10px;margin-bottom:6px'>📍 MK 景氣訊號</div>"
-                f"<span style='{sig["sig_style"]};padding:4px 14px;border-radius:20px;"
+                f"<span style='{sig['sig_style']};padding:4px 14px;border-radius:20px;"
                 f"font-size:15px;font-weight:700;display:inline-block'>{sig['label']}</span>"
                 f"<div style='color:#8b949e;font-size:11px;margin-top:6px'>{sig['reason']}</div>"
                 "</div>"
@@ -2836,7 +3009,7 @@ with tab3:
                     f"align-items:center;gap:14px'>"
                     f"<div style='min-width:120px'>"
                     f"<div style='font-size:10px;color:#888'>同類四分位排名（Sharpe）</div>"
-                    f"<div style='font-size:15px;font-weight:900;color:{_qr["color"]}'>{_qr["label"]}</div>"
+                    f"<div style='font-size:15px;font-weight:900;color:{_qr['color']}'>{_qr['label']}</div>"
                     f"</div>"
                     f"<div style='font-size:11px;color:#ccc'>{_qr['advice'] or '持續保持，定期複查'}</div>"
                     f"</div>", unsafe_allow_html=True)
