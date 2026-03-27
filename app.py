@@ -555,6 +555,48 @@ def _render_macro_dashboard(ind, phase_info):
             <div style='color:#69f0ae;font-size:11px;margin-top:8px;line-height:1.6'>{advice}</div>
             </div>""", unsafe_allow_html=True)
 
+    # ── 成長/通膨雙軸象限顯示（文件建議 §1）─────────────────────
+    _gi = phase_info.get("growth_inflation", {})
+    if _gi:
+        _quad       = _gi.get("quadrant", "")
+        _quad_en    = _gi.get("quadrant_en", "")
+        _qcol       = _gi.get("quad_color", "#888")
+        _qico       = _gi.get("quad_icon", "")
+        _qdesc      = _gi.get("quad_desc", "")
+        _qalloc     = _gi.get("quad_alloc", "")
+        _gs         = _gi.get("growth_score", 0)
+        _is         = _gi.get("inflation_score", 0)
+        _g_bar_w    = int(max(0, min(100, (_gs + 1) / 2 * 100)))
+        _i_bar_w    = int(max(0, min(100, (_is + 1) / 2 * 100)))
+        _g_bar_col  = "#00c853" if _gs > 0 else "#f44336"
+        _i_bar_col  = "#f44336" if _is > 0 else "#00c853"
+        st.markdown(
+            f"<div style='background:#0a1628;border:1px solid {_qcol};"
+            f"border-radius:12px;padding:14px 18px;margin:8px 0;"
+            f"display:flex;align-items:center;gap:16px'>"
+            f"<div style='font-size:28px;line-height:1'>{_qico}</div>"
+            f"<div style='flex:1'>"
+            f"<div style='font-size:11px;color:#888;letter-spacing:1px;margin-bottom:4px'>"
+            f"成長/通膨雙軸分析 | Growth-Inflation Matrix</div>"
+            f"<div style='display:flex;align-items:baseline;gap:8px;margin-bottom:6px'>"
+            f"<span style='font-size:18px;font-weight:900;color:{_qcol}'>{_quad}</span>"
+            f"<span style='font-size:12px;color:#666'>{_quad_en}</span>"
+            f"<span style='font-size:12px;color:{_qcol};margin-left:4px'>{_qdesc}</span>"
+            f"</div>"
+            f"<div style='display:flex;gap:20px'>"
+            f"<div style='flex:1'><div style='font-size:10px;color:#888;margin-bottom:2px'>"
+            f"成長訊號 ({'+' if _gs>0 else ''}{_gs:.2f})</div>"
+            f"<div style='background:#161b22;border-radius:3px;height:6px'>"
+            f"<div style='background:{_g_bar_col};width:{_g_bar_w}%;height:100%;border-radius:3px'></div></div></div>"
+            f"<div style='flex:1'><div style='font-size:10px;color:#888;margin-bottom:2px'>"
+            f"通膨訊號 ({'+' if _is>0 else ''}{_is:.2f})</div>"
+            f"<div style='background:#161b22;border-radius:3px;height:6px'>"
+            f"<div style='background:{_i_bar_col};width:{_i_bar_w}%;height:100%;border-radius:3px'></div></div></div>"
+            f"</div>"
+            f"<div style='font-size:10px;color:#aaa;margin-top:6px'>建議調整：{_qalloc}</div>"
+            f"</div></div>",
+            unsafe_allow_html=True)
+
     # ══════════════════════════════════════════════════════════════
     # v16.0 Task 1: 總經紅綠燈 — VIX>30 / 深度倒掛強制警告
     # ══════════════════════════════════════════════════════════════
@@ -793,6 +835,17 @@ def _render_macro_dashboard(ind, phase_info):
             _n  = d.get("name","")
             _vf = (f"{v:,.0f}" if isinstance(v,float) and abs(v)>=1000 else
                    f"{v:.2f}" if isinstance(v,float) else str(v) if v is not None else "—")
+            # Z-Score badge
+            _z  = d.get("z_score")
+            _zhtml = ""
+            if _z is not None:
+                _zc = "#f44336" if _z > 1.5 else ("#00c853" if _z < -1.5 else "#888")
+                _zlbl = "過熱" if _z > 1.5 else ("低估" if _z < -1.5 else "中性")
+                _zhtml = (f'<span style="background:#1a1a2e;color:{_zc};'
+                          f'font-size:9px;padding:1px 5px;border-radius:8px;'
+                          f'border:1px solid {_zc};margin-left:4px" '
+                          f'title="Z-Score = {_z}（相對2年均值的標準差位置）">'
+                          f'Z={_z:+.1f} {_zlbl}</span>')
             _h  = (f'<div style="background:#0d1117;border:1px solid #21262d;border-radius:10px;'
                    f'padding:12px 14px;margin-bottom:8px;min-height:88px">'
                    f'<div style="display:flex;justify-content:space-between;align-items:flex-start">'
@@ -805,6 +858,7 @@ def _render_macro_dashboard(ind, phase_info):
                    f'<span style="color:#555;font-size:11px">{unit}</span>'
                    f'{diff_str}'
                    f'<span style="font-size:16px;margin-left:4px">{sig}</span>'
+                   f'{_zhtml}'
                    f'</div>'
                    f'<div style="color:#555;font-size:10px;margin-top:2px;line-height:1.4">{desc}</div>'
                    f'</div>')
@@ -1583,6 +1637,39 @@ with tab1:
 
         _render_macro_dashboard(ind, phase)
 
+        # ── TAA 戰術配置警告（文件建議 §3：連動持倉）─────────────
+        _pf_taa     = st.session_state.get("portfolio_funds", [])
+        _total_taa  = sum(f.get("invest_twd", 0) or 0 for f in _pf_taa)
+        _phase_alloc= phase.get("alloc", {})
+        _rec_stock  = _phase_alloc.get("股票", 50)
+        _rec_bond   = _phase_alloc.get("債券", 40)
+        if _total_taa > 0 and _phase_alloc:
+            _sat_taa = sum(f.get("invest_twd", 0) or 0 for f in _pf_taa if not f.get("is_core"))
+            _sat_pct = round(_sat_taa / _total_taa * 100, 1)
+            _deviation = _sat_pct - _rec_stock
+            if abs(_deviation) >= 20:
+                if _deviation > 0:
+                    st.markdown(
+                        f"<div style='background:linear-gradient(135deg,#2a1000,#1f0a00);"
+                        f"border:1.5px solid #ff9800;border-radius:10px;"
+                        f"padding:12px 16px;margin:8px 0'>"
+                        f"<span style='color:#ff9800;font-weight:700'>⚠️ TAA 配置警告</span>"
+                        f"<span style='color:#ccc;font-size:13px;margin-left:8px'>"
+                        f"衛星（成長/股票型）佔比 <b style='color:#ff9800'>{_sat_pct}%</b>，"
+                        f"高於 {cur_phase}期建議股票 <b>{_rec_stock}%</b>（偏高 {abs(_deviation):.0f}%）"
+                        f"— 建議逐步減碼衛星，增加投資等級債或現金部位</span></div>",
+                        unsafe_allow_html=True)
+                else:
+                    st.markdown(
+                        f"<div style='background:linear-gradient(135deg,#001a0a,#0a1f00);"
+                        f"border:1.5px solid #69f0ae;border-radius:10px;"
+                        f"padding:12px 16px;margin:8px 0'>"
+                        f"<span style='color:#69f0ae;font-weight:700'>💡 TAA 配置提示</span>"
+                        f"<span style='color:#ccc;font-size:13px;margin-left:8px'>"
+                        f"衛星（成長/股票型）佔比 <b style='color:#69f0ae'>{_sat_pct}%</b>，"
+                        f"低於 {cur_phase}期建議股票 <b>{_rec_stock}%</b>（低於 {abs(_deviation):.0f}%）"
+                        f"— 景氣仍在擴張，可適度加碼衛星成長型資產</span></div>",
+                        unsafe_allow_html=True)
 
         # ── 台灣市場水溫計（v15 TPI）────────────────────────────
     with st.expander("🇹🇼 台灣市場水溫計（TPI 三因子轉折指標）", expanded=False):
@@ -2005,7 +2092,7 @@ with tab3:
                 "<div style='margin:6px 0;padding:10px 16px;border-radius:8px;"
                 "background:#0d1117;border:1px solid #30363d;text-align:center'>"
                 "<div style='color:#888;font-size:10px;margin-bottom:6px'>📍 MK 景氣訊號</div>"
-                f"<span style='{sig["sig_style"]};padding:4px 14px;border-radius:20px;"
+                f"<span style='{sig['sig_style']};padding:4px 14px;border-radius:20px;"
                 f"font-size:15px;font-weight:700;display:inline-block'>{sig['label']}</span>"
                 f"<div style='color:#8b949e;font-size:11px;margin-top:6px'>{sig['reason']}</div>"
                 "</div>"
@@ -2836,7 +2923,7 @@ with tab3:
                     f"align-items:center;gap:14px'>"
                     f"<div style='min-width:120px'>"
                     f"<div style='font-size:10px;color:#888'>同類四分位排名（Sharpe）</div>"
-                    f"<div style='font-size:15px;font-weight:900;color:{_qr["color"]}'>{_qr["label"]}</div>"
+                    f"<div style='font-size:15px;font-weight:900;color:{_qr['color']}'>{_qr['label']}</div>"
                     f"</div>"
                     f"<div style='font-size:11px;color:#ccc'>{_qr['advice'] or '持續保持，定期複查'}</div>"
                     f"</div>", unsafe_allow_html=True)

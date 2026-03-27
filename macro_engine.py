@@ -14,6 +14,9 @@ import requests, yfinance as yf, pandas as pd, numpy as np, streamlit as st, mat
 
 FRED_BASE = "https://api.stlouisfed.org/fred/series/observations"
 
+# ── Self-healing snapshot: 記錄最後一次成功抓取的指標資料
+_INDICATOR_SNAPSHOT: dict = {}
+
 def _fred(sid, key, n=250):
     if not key: return pd.DataFrame()
     try:
@@ -37,6 +40,17 @@ def _yf_s(ticker, period="2y"):
     except Exception as e:
         print(f"[yf_s {ticker}] {e}")
         return pd.Series(dtype=float)
+
+def _calc_z(series: pd.Series, current_val: float) -> float | None:
+    """計算當前值相對於歷史序列的 Z-Score（標準化位置）"""
+    if series is None or len(series) < 12:
+        return None
+    mu = float(series.mean())
+    sigma = float(series.std())
+    if sigma == 0:
+        return 0.0
+    return round((current_val - mu) / sigma, 2)
+
 
 def _trend(vals):
     if len(vals) < 3: return ""
@@ -407,7 +421,166 @@ def fetch_all_indicators(fred_api_key):
             score=0.5 if v>p else -0.5,
             weight=0.5, series=s)
 
+    # ── Post-process：計算各指標 Z-Score（相對於 2 年歷史的標準化位置）
+    for _key, _d in R.items():
+        _series = _d.get("series")
+        _val    = _d.get("value")
+        if _val is not None and _series is not None and hasattr(_series, "__len__"):
+            try:
+                _d["z_score"] = _calc_z(_series, float(_val))
+            except Exception:
+                _d["z_score"] = None
+        else:
+            _d["z_score"] = None
+
+    # ── Self-healing snapshot：若成功取得 ≥5 個指標，更新快照
+    global _INDICATOR_SNAPSHOT
+    if len(R) >= 5:
+        _INDICATOR_SNAPSHOT = {k: {kk: vv for kk, vv in v.items() if kk != "series"}
+                               for k, v in R.items()}  # 快照不含 series（節省記憶體）
+    elif not R and _INDICATOR_SNAPSHOT:
+        # API 全部失敗時回傳最後一次快照並警告
+        st.warning("⚠️ 無法連線 FRED / Yahoo Finance，顯示最後快照資料（數值可能稍舊）")
+        return {k: dict(v) for k, v in _INDICATOR_SNAPSHOT.items()}
+
     return R
+
+
+def get_synced_dashboard_data(raw_data_dict: dict, lookback_days: int = 30) -> pd.DataFrame:
+    """
+    數據對齊補丁 v1：統一時間軸 + 假日前向填充（文件建議 §2）
+    1. 建立完整日曆時間索引
+    2. 自動填充假日空值（前向填充，上限 5 天）
+    3. 若仍有空值 → 資料嚴重斷連，透過 Streamlit 警告
+    """
+    full_idx = pd.date_range(
+        end=pd.Timestamp.now().normalize(), periods=lookback_days, freq='D'
+    )
+    main_df = pd.DataFrame(index=full_idx)
+
+    for name, data in raw_data_dict.items():
+        if isinstance(data, pd.Series):
+            s = data.copy()
+        elif isinstance(data, (list,)):
+            s = pd.Series(data)
+        else:
+            continue
+        s.index = pd.to_datetime(s.index).normalize()
+        main_df[name] = s
+
+    # 核心修正：前向填充假日數據，限制回溯 5 天
+    main_df = main_df.ffill(limit=5)
+
+    # 若仍有空值，代表數據嚴重斷連
+    if main_df.iloc[-1].isnull().any():
+        missing = main_df.columns[main_df.iloc[-1].isnull()].tolist()
+        st.warning(f"⚠️ 部分數據源連線不穩：{', '.join(missing)}，請檢查網路或 API 配額")
+
+    return main_df
+
+
+def calc_growth_inflation_axis(indicators: dict) -> dict:
+    """
+    成長/通膨雙軸分析（文件建議 §1：二象限循環判定）
+    ─────────────────────────────────────────────────
+    Growth Axis  : PMI, 殖利率曲線, M2, 市場廣度, 消費者信心, 初領失業金, 銅博士
+    Inflation Axis: CPI, PPI, Fed Rate
+    ─────────────────────────────────────────────────
+    四象限:
+      復甦/擴張 (Goldilocks): 成長↑ 通膨↓
+      過熱 (Overheat)       : 成長↑ 通膨↑
+      滯脹 (Stagflation)    : 成長↓ 通膨↑
+      衰退 (Recession)      : 成長↓ 通膨↓
+    """
+    def _get(key, attr="value"):
+        return (indicators.get(key) or {}).get(attr)
+
+    # ── Growth signals（正=成長向上，負=成長向下）
+    growth_signals = []
+    pmi_v = _get("PMI")
+    if pmi_v is not None:
+        growth_signals.append(1 if pmi_v >= 50 else -1)
+
+    y22 = _get("YIELD_10Y2Y")
+    if y22 is not None:
+        growth_signals.append(1 if y22 >= 0 else -1)
+
+    m2_v = _get("M2")
+    if m2_v is not None:
+        growth_signals.append(1 if m2_v >= 3 else -1)
+
+    adl_chg = _get("ADL", "prev")  # prev = monthly change %
+    if adl_chg is not None:
+        growth_signals.append(1 if adl_chg >= 0 else -1)
+
+    conf_v = _get("CONSUMER_CONF")
+    if conf_v is not None:
+        growth_signals.append(1 if conf_v >= 70 else -1)
+
+    jobless_v = _get("JOBLESS")
+    if jobless_v is not None:
+        growth_signals.append(1 if jobless_v < 280000 else -1)
+
+    copper_v = _get("COPPER")  # monthly change %
+    if copper_v is not None:
+        growth_signals.append(1 if copper_v >= 0 else -1)
+
+    # ── Inflation signals（正=通膨偏高，負=通膨受控）
+    inflation_signals = []
+    cpi_v = _get("CPI")
+    if cpi_v is not None:
+        inflation_signals.append(1 if cpi_v >= 3.0 else -1)
+
+    ppi_v = _get("PPI")
+    if ppi_v is not None:
+        inflation_signals.append(1 if ppi_v >= 3.0 else -1)
+
+    fed_v = _get("FED_RATE")
+    if fed_v is not None:
+        inflation_signals.append(1 if fed_v >= 4.0 else -1)
+
+    # ── 計算平均訊號分數（-1 ~ +1）
+    growth_score    = sum(growth_signals)    / max(len(growth_signals), 1)
+    inflation_score = sum(inflation_signals) / max(len(inflation_signals), 1)
+    growth_up    = growth_score > 0
+    inflation_up = inflation_score > 0
+
+    # ── 四象限映射
+    if growth_up and not inflation_up:
+        quadrant    = "復甦/擴張"; quadrant_en = "Goldilocks"
+        quad_color  = "#00c853";   quad_icon   = "🌱"
+        quad_desc   = "成長↑ 通膨↓ — 黃金期，積極持有風險資產"
+        quad_alloc  = "衛星成長型↑  核心配息↑  現金↓"
+    elif growth_up and inflation_up:
+        quadrant    = "過熱";      quadrant_en = "Overheat"
+        quad_color  = "#ff9800";   quad_icon   = "🔥"
+        quad_desc   = "成長↑ 通膨↑ — 景氣高峰，注意泡沫與緊縮風險"
+        quad_alloc  = "實物資產↑  高息防禦↑  成長型↓"
+    elif not growth_up and inflation_up:
+        quadrant    = "滯脹";      quadrant_en = "Stagflation"
+        quad_color  = "#f44336";   quad_icon   = "⚠️"
+        quad_desc   = "成長↓ 通膨↑ — 最惡劣環境，降低股票，持有商品與短債"
+        quad_alloc  = "商品/黃金↑  短天期債↑  成長股↓↓"
+    else:
+        quadrant    = "衰退";      quadrant_en = "Recession"
+        quad_color  = "#ff9800";   quad_icon   = "🌧️"
+        quad_desc   = "成長↓ 通膨↓ — 景氣收縮，轉向長債與防禦型配置"
+        quad_alloc  = "長天期債↑↑  防禦股息↑  現金↑  成長股↓"
+
+    return {
+        "growth_score":     round(growth_score, 2),
+        "inflation_score":  round(inflation_score, 2),
+        "growth_up":        growth_up,
+        "inflation_up":     inflation_up,
+        "quadrant":         quadrant,
+        "quadrant_en":      quadrant_en,
+        "quad_color":       quad_color,
+        "quad_icon":        quad_icon,
+        "quad_desc":        quad_desc,
+        "quad_alloc":       quad_alloc,
+        "n_growth":         len(growth_signals),
+        "n_inflation":      len(inflation_signals),
+    }
 
 
 def calc_macro_phase(indicators: dict) -> dict:
@@ -565,6 +738,9 @@ def calc_macro_phase(indicators: dict) -> dict:
     )
     _w_icon, _w_label, _w_color, _w_alloc_str = _weather_tup
 
+    # 成長/通膨雙軸分析（文件建議 §1 二象限循環判定）
+    growth_inflation = calc_growth_inflation_axis(indicators)
+
     return dict(
         score=score, phase=phase, phase_en=phase_en,
         phase_color=phase_color, alloc=alloc,
@@ -580,6 +756,8 @@ def calc_macro_phase(indicators: dict) -> dict:
         trend_label=trend_label,
         trend_color=trend_color,
         alloc_transition=alloc_transition,
+        # 雙軸分析
+        growth_inflation=growth_inflation,
         # 保留舊 key 供 AI engine 使用
         inflection=mk_signals.get("inflection",{}),
         signals=mk_signals.get("signals",[]),
