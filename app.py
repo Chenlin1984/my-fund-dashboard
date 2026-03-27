@@ -18,7 +18,7 @@ import pandas as pd, numpy as np
 from macro_engine import fetch_all_indicators, calc_macro_phase, ENGINE_VERSION
 
 # ── 版本戳記：在這裡改版本號 = 確認 app.py 已部署至 Streamlit Cloud
-APP_VERSION = "v17.2_QuadrantEngine"
+APP_VERSION = "v17.3_CnyesAPI"
 from fund_fetcher  import (fetch_fund_by_key, search_moneydj_by_name,
                             fetch_fund_structure, fetch_fund_from_moneydj_url,
                             tdcc_search_fund,
@@ -953,7 +953,7 @@ def _render_fund_structure(holdings: dict, mj_raw: dict = None):
         st.markdown("")
 
     if not holdings:
-        st.warning("⚠️ 持股資料未取得（MoneyDJ 可能限制 Colab IP，請確認網路）")
+        st.warning("⚠️ 持股資料未取得（MoneyDJ 可能封鎖伺服器 IP，請改用完整網址）")
         return
 
     col_a, col_b = st.columns([1, 1])
@@ -1323,7 +1323,7 @@ def _render_fund_analysis(fd, phase_info=None):
                 # 3) 同類排名表（peer_compare）
                 _peer = mj_raw.get("risk_metrics", {}).get("peer_compare", {})
                 if not _peer:
-                    st.info("📊 **同組基金排行**：MoneyDJ wb07 同類比較資料暫時無法取得。"                            " 可能原因：①Colab IP 限制 ②頁面結構異動。"                            " 請直接訪問 [MoneyDJ wb07]("                            f"https://www.moneydj.com/funddj/yp/wb07.djhtm?a={mj_raw.get('fund_code','')}) 查閱。")
+                    st.info("📊 **同組基金排行**：MoneyDJ wb07 同類比較資料暫時無法取得。"                            " 可能原因：①IP 限制 ②頁面結構異動。"                            " 請直接訪問 [MoneyDJ wb07]("                            f"https://www.moneydj.com/funddj/yp/wb07.djhtm?a={mj_raw.get('fund_code','')}) 查閱。")
                 if _peer:
                     st.markdown("##### 📊 同類型排名比較")
                     _peer_fields = ["年平均報酬率","Sharpe","Beta","標準差"]
@@ -2030,7 +2030,7 @@ with tab3:
             _missing = [lbl for lbl, ok, val in _checks if not ok and val != "尚未載入"]
             if _missing:
                 _miss_reasons = {
-                    "wb01含息報酬率": "MoneyDJ wb01 未抓取到（Colab IP 可能被限制）",
+                    "wb01含息報酬率": "MoneyDJ wb01 未抓取到（IP 限制，請改用完整網址）",
                     "wb05配息率":     "MoneyDJ wb05 未抓取到（IP 限制或基金無配息）",
                     "wb07標準差":     "MoneyDJ wb07 風險表未載入",
                     "產業配置":       "MoneyDJ 持股頁未載入（IP 限制）",
@@ -2054,7 +2054,7 @@ with tab3:
         st.markdown(
             "<div style='background:#0d1117;border:1px solid #30363d;border-radius:8px;"
             "padding:12px;margin-bottom:8px;font-size:12px;color:#888'>"
-            "💡 當 MoneyDJ 被 Colab IP 限制時，手動輸入以下 4 個數字仍可完成"
+            "💡 當 MoneyDJ 封鎖伺服器 IP 時，手動輸入以下 4 個數字仍可完成"
             " <b style='color:#e0e0e0'>含息報酬率 / 配息年化率 / 吃本金判斷</b><br>"
             "這些數字可從：MoneyDJ 網頁 / 安聯投信官網 / 基金月報 / 對帳單 取得"
             "</div>", unsafe_allow_html=True)
@@ -3788,8 +3788,10 @@ with tab2:
                     # ── Sub1: NAV Correlation Heatmap ────────────────────
                     with _at3_sub1:
                         if len(_nav_series) < 2:
-                            (st.warning("⚠️ 需要至少 2 檔基金有完整淨值資料（≥20筆）才能計算。")
-                             if len(loaded_funds) >= 2 else st.info("💡 請加入至少 2 檔基金。"))
+                            if len(loaded_funds) >= 2:
+                                st.warning("⚠️ 需要至少 2 檔基金有完整淨值資料（≥20筆）才能計算。")
+                            else:
+                                st.info("💡 請加入至少 2 檔基金。")
                         if len(_nav_series) >= 2:
                             _df_nav = _pd3.DataFrame(_nav_series).ffill().bfill().dropna(how="all")
                             if len(_df_nav) >= 10:
