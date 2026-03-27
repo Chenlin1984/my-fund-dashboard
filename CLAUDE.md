@@ -5,24 +5,29 @@
 - Repo：chenlin1984/my-fund-dashboard
 - 平台：Streamlit Cloud
 
-## Git 規則
-- 不要推送到 main/master，除非用戶明確要求
-- 不要建立 PR，除非用戶明確要求
-- 所有開發在指定功能分支進行
+## 一、開發與自省 (Self-Audit)
+每次撰寫或修改代碼後，必須自動執行以下自我審核：
+- **邏輯審查**：確認實作符合需求，無邏輯斷層
+- **邊界測試**：主動考慮 2-3 個異常場景（空輸入、極大/極小值、異常型別）
+- **效能評估**：估計時間/空間複雜度，說明是否可接受
+- **Debug 與修正**：若發現潛在 Bug，直接在最終代碼中標註並修正，不留待後續
+
+## 二、交付規範 (PR & Sync)
+- 所有代碼變動**禁止**直接推送到 master/main 分支
+- 代碼審核通過後，必須自動建立新分支並發起 Pull Request
+- **任務完成的定義**：提供 GitHub PR 連結給使用者
 - 推送前確認分支名稱正確
 
-## 程式碼修改規則
+## 三、精簡原則
+- 優先使用推理而非冗餘指令；規則應清爽、無重複
+- 不要新增不必要的抽象層或 helper
+- 不要為假設性未來需求設計
 - 修改任何檔案前必須先 Read 讀取
-- 修改 app.py 或 macro_engine.py 前，確認版本號已更新
-- 版本格式：ENGINE_VERSION 在 macro_engine.py 頂部，APP_VERSION 在 app.py 頂部
 
-## 核心架構原則
+## 核心架構規則（基金儀表板專用）
+- 修改 app.py 或 macro_engine.py 前，確認版本號已更新
+  - ENGINE_VERSION 在 macro_engine.py 頂部，APP_VERSION 在 app.py 頂部
 - 快取清除：手動觸發時必須呼叫 fetch_all_indicators.clear()
 - 趨勢計算：使用 np.polyfit Smart Slope，禁止用 diff()
 - UI 渲染順序：所有 banner/alert 必須在 fetch 完成後才顯示
 - 指標後處理：每個指標 dict 需含 z_score, trend_slope, days_stale, is_stale
-
-## 禁止行為
-- 不要新增不必要的抽象層或 helper
-- 不要為假設性未來需求設計
-- 不要在未讀取檔案的情況下提議修改

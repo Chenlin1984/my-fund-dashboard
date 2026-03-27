@@ -7,7 +7,7 @@
 #            請回報給開發者更新解析邏輯。
 # =================================================
 #!/usr/bin/env python3
-"""fund_fetcher.py v6.4
+"""fund_fetcher.py v6.5
 v6.4 修正:
 - fetch_performance_wb01(): 雙策略解析，多 URL fallback
 - fetch_risk_metrics(): 更強健的欄位偵測，多 URL fallback
@@ -795,9 +795,104 @@ def calc_health_from_manual(
     }
 
 
-# ── 來源2：鉅亨網（Colab 友善，備用）────────────────────────────────
+# ── 來源2：鉅亨網 API（無 IP 限制，伺服器可用）────────────────────────
+def fetch_nav_cnyes(code: str) -> pd.Series:
+    """
+    鉅亨網 fund.api.cnyes.com 歷史淨值。
+    使用 REST JSON API，不依賴 MoneyDJ，Streamlit Cloud 可存取。
+    """
+    import datetime as _dt2
+    import time as _time2
+    rows = {}
+    end_d   = _dt2.date.today()
+    start_d = end_d - _dt2.timedelta(days=400)
+    end_ms   = int(_time2.mktime(end_d.timetuple())) * 1000
+    start_ms = int(_time2.mktime(start_d.timetuple())) * 1000
+    _code = code.upper().strip()
+    # cnyes 支援的 URL 格式（按優先順序嘗試）
+    urls = [
+        f"https://fund.api.cnyes.com/fund/api/v2/funds/{_code}/nav?start={start_ms}&end={end_ms}",
+        f"https://fund.api.cnyes.com/fund/api/v2/funds/{_code.lower()}/nav?start={start_ms}&end={end_ms}",
+    ]
+    for _url in urls:
+        try:
+            r = requests.get(_url, headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+                "Accept": "application/json",
+                "Referer": "https://fund.cnyes.com/",
+            }, timeout=15)
+            if r.status_code != 200:
+                continue
+            data = r.json()
+            # 格式 1: {"data": {"nav": [[timestamp_ms, value], ...]}}
+            navs = (data.get("data", {}).get("nav")
+                    or data.get("data", {}).get("navs")
+                    or data.get("items")
+                    or [])
+            if not navs and isinstance(data, list):
+                navs = data
+            for item in navs:
+                if isinstance(item, (list, tuple)) and len(item) >= 2:
+                    ts_ms, val = item[0], item[1]
+                    try:
+                        ts = pd.Timestamp(int(ts_ms), unit="ms")
+                        v  = safe_float(val)
+                        if v and v > 0:
+                            rows[ts.normalize()] = v
+                    except Exception:
+                        pass
+                elif isinstance(item, dict):
+                    d_val = (item.get("date") or item.get("Date")
+                             or item.get("nav_date") or "")
+                    n_val = safe_float(item.get("nav") or item.get("NAV")
+                                       or item.get("value"))
+                    if d_val and n_val:
+                        try:
+                            rows[pd.Timestamp(str(d_val)[:10])] = n_val
+                        except Exception:
+                            pass
+            if rows:
+                break
+        except Exception as _e:
+            print(f"[cnyes_nav] {_code} {_url[:60]}: {_e}")
+    if rows:
+        return pd.Series(rows).sort_index()
+    return pd.Series(dtype=float)
+
+
+def fetch_div_cnyes(code: str) -> list:
+    """
+    鉅亨網配息資料（REST API）。
+    """
+    divs = []
+    _code = code.upper().strip()
+    try:
+        url = f"https://fund.api.cnyes.com/fund/api/v2/funds/{_code}/dividend"
+        r = requests.get(url, headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+            "Accept": "application/json",
+            "Referer": "https://fund.cnyes.com/",
+        }, timeout=15)
+        if r.status_code == 200:
+            data = r.json()
+            items = (data.get("data") or data.get("items") or [])
+            if isinstance(items, list):
+                for item in items:
+                    d = (item.get("date") or item.get("exDate") or "")
+                    amt = safe_float(item.get("dividend") or item.get("amount"))
+                    if d and amt is not None:
+                        divs.append({
+                            "date": str(d)[:10],
+                            "amount": amt,
+                            "yield_pct": safe_float(item.get("yieldRate") or item.get("yield_pct"), 0),
+                        })
+    except Exception as _e:
+        print(f"[cnyes_div] {_code}: {_e}")
+    return divs
+
+
 def _src_cnyes_nav(code: str) -> pd.Series:
-    """鉅亨網歷史淨值（Colab IP 不受限）"""
+    """鉅亨網歷史淨值（REST API，無 IP 封鎖）"""
     try:
         s = fetch_nav_cnyes(code)
         if len(s) >= 10:
@@ -809,7 +904,7 @@ def _src_cnyes_nav(code: str) -> pd.Series:
 
 
 def _src_cnyes_div(code: str) -> list:
-    """鉅亨網配息（Colab IP 不受限）"""
+    """鉅亨網配息（REST API，無 IP 封鎖）"""
     try:
         divs = fetch_div_cnyes(code)
         if divs:
@@ -1068,6 +1163,7 @@ def _src_nav_30day(code: str, page_type: str = "") -> pd.Series:
 
     bases = [
         "https://tcbbankfund.moneydj.com/funddj",
+        "https://chubb.moneydj.com/funddj",
         "https://www.moneydj.com/funddj",
     ]
 
@@ -1125,25 +1221,43 @@ def _src_nav_30day(code: str, page_type: str = "") -> pd.Series:
 
 def _src_tcb_nav(code: str) -> pd.Series:
     """
-    TCB MoneyDJ 子網域歷史淨值。
-    v13.3 修正：
-      ① params(A/B/C) 正確傳入 fetch_url_with_retry
-      ② 境內基金(ACTI)使用 yp010000 referer，境外用 yp010001
+    TCB / MoneyDJ 子網域歷史淨值。
+    依照原始 fetch_nav 順序，逐一嘗試各子網域與端點。
     """
     import datetime as _dt
-    rows = {}
-    base  = "https://tcbbankfund.moneydj.com/funddj"
+    import re as _re2
     today = _dt.date.today()
     start = today - _dt.timedelta(days=400)
-    # ① 正確的 params（之前漏傳，導致拿不到歷史區間資料）
+
+    # ── 優先嘗試原始 wf01/wb02 路徑（原始版本使用，簡單 ?a= 即可）
+    _simple_urls = [
+        f"https://tcbbankfund.moneydj.com/w/wf/wf01.djhtm?a={code}",
+        f"https://tcbbankfund.moneydj.com/w/wb/wb02.djhtm?a={code}",
+        f"https://chubb.moneydj.com/w/wf/wf01.djhtm?a={code}",
+        f"https://www.moneydj.com/funddj/yf/yp004001.djhtm?a={code}",
+    ]
+    for _url in _simple_urls:
+        try:
+            hdr = {**HDR, "Referer": "https://www.moneydj.com/"}
+            r = fetch_url_with_retry(_url, headers=hdr, timeout=20, retries=2)
+            if r is None:
+                continue
+            s = _parse_nav_html(r.text)
+            if len(s) >= 10:
+                print(f"[src_tcb] ✅ {code} {len(s)} 筆（{_url[:55]}）")
+                return s
+            print(f"[src_tcb] {code} → {len(s)} 筆 ({_url[:45]})")
+        except Exception as e:
+            print(f"[src_tcb] {code} {_url[:45]}: {e}")
+
+    # ── 次要：yp004002 帶日期區間（需 A/B/C params）
+    base  = "https://tcbbankfund.moneydj.com/funddj"
     params = {
         "A": code,
         "B": start.strftime("%Y%m%d"),
         "C": today.strftime("%Y%m%d"),
     }
-    # v13.8: get_page_types_to_try — 首選失敗自動換頁型重試
     _primary_page = "yp010000" if _is_domestic_code(code) else "yp010001"
-    import re as _re2
     for _page in get_page_types_to_try(_primary_page):
         hdr = {**HDR,
                "Referer": f"https://tcbbankfund.moneydj.com/funddj/ya/{_page}.djhtm?a={code}"}
@@ -1153,7 +1267,6 @@ def _src_tcb_nav(code: str) -> pd.Series:
                 headers=hdr, params=params, timeout=25
             )
             if r is None:
-                print(f"[src_tcb] {code} page={_page} → None，換頁型")
                 continue
             rows = {}
             soup = BeautifulSoup(r.text, "lxml")
@@ -1169,15 +1282,15 @@ def _src_tcb_nav(code: str) -> pd.Series:
                                 rows[pd.Timestamp(dt_txt)] = v
             if len(rows) >= 10:
                 s = pd.Series(rows).sort_index()
-                print(f"[src_tcb] ✅ {code} {len(s)} 筆（page={_page}）")
+                print(f"[src_tcb] ✅ {code} {len(s)} 筆（yp004002 page={_page}）")
                 return s
-            print(f"[src_tcb] {code} page={_page} → 只有 {len(rows)} 筆，換頁型重試")
         except Exception as e:
-            print(f"[src_tcb] {code} page={_page}: {e}")
-    # v14.3: yf/yp004002 全部失敗 → fallback 近30日 nav 頁
+            print(f"[src_tcb] {code} yp004002 page={_page}: {e}")
+
+    # ── 最終 fallback：近30日
     s30 = _src_nav_30day(code)
     if len(s30) >= 10:
-        print(f"[src_tcb] ⤵ {code} yp004002 失敗，改用近30日 ({len(s30)}筆)")
+        print(f"[src_tcb] ⤵ {code} 改用近30日 ({len(s30)}筆)")
         return s30
     return pd.Series(dtype=float)
 
@@ -2146,20 +2259,18 @@ def fetch_fund_from_moneydj_url(url: str) -> dict:
         _has_risk = bool(result.get("risk_metrics"))
         if _has_perf or _has_risk:
             result["error"] = (
-                "⚠️ 淨值歷史抓取失敗（MoneyDJ 可能限制 Colab IP）\n"
+                "⚠️ 淨值歷史抓取失敗（MoneyDJ 可能封鎖伺服器 IP）\n"
                 "但已取得部分績效/風險數據，可繼續查看。\n"
-                "💡 解決方案：\n"
-                "① Colab 選單 → 執行階段 → 變更執行階段類型 → 重新連線（換 IP）\n"
-                "② 或使用 MoneyDJ 官網手動查閱後，於下方手動填入數據"
+                "💡 建議：直接貼 MoneyDJ 完整網址以取得最佳結果"
             )
         else:
             result["error"] = (
-                "❌ 無法取得 MoneyDJ 資料（Colab IP 被封鎖）\n"
+                "❌ 無法取得基金資料（所有來源均失敗）\n"
                 "💡 解決方案：\n"
-                "① Colab 上方選單 → 執行階段 → 變更執行階段類型 → 重新連線（換 IP）\n"
-                "② 直接貼 MoneyDJ 完整網址（比代碼更準確）：\n"
+                "① 直接貼 MoneyDJ 完整網址（比代碼更準確）：\n"
                 "   境內基金：www.moneydj.com/funddj/ya/yp010000.djhtm?a={code}\n"
-                "   境外基金：www.moneydj.com/funddj/ya/YP081000.djhtm?a={code}"
+                "   境外基金：www.moneydj.com/funddj/ya/yp010001.djhtm?a={code}\n"
+                "② 於下方手動填入淨值、配息數據"
             ).format(code=result.get("full_key","???"))
 
     return result
