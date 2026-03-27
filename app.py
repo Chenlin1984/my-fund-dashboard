@@ -226,16 +226,16 @@ with st.sidebar:
         f"{'✅' if GEMINI_KEY else '❌'} Gemini"
     )
 
-    # ── PR 級別重整按鈕（說明書 §3：st.cache_data + st.cache_resource 全清）
-    if st.button("♻️ PR 級別重整（強制清除快照）", use_container_width=True,
-                 help="清除 cache_data + cache_resource，確保載入 GitHub 最新邏輯。完成後請手動 F5 重整網頁。"):
+    # ── 強制同步 GitHub 最新邏輯
+    if st.sidebar.button("♻️ 強制同步 GitHub 最新邏輯", use_container_width=True,
+                         help="清除 cache_data + cache_resource，確保載入 GitHub 最新版本邏輯。"):
         st.cache_data.clear()
         st.cache_resource.clear()
         st.session_state["macro_done"]        = False
         st.session_state["indicators"]        = {}
         st.session_state["phase_info"]        = {}
         st.session_state["macro_last_update"] = None
-        st.success(f"✅ 快取已全清！Engine: {ENGINE_VERSION} — 請按 F5 重整網頁載入最新邏輯。")
+        st.success(f"已同步至 {APP_VERSION}，請重新整理網頁")
         st.rerun()
     st.divider()
 
