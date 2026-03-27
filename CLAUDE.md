@@ -12,10 +12,11 @@
 - **效能評估**：估計時間/空間複雜度，說明是否可接受
 - **Debug 與修正**：若發現潛在 Bug，直接在最終代碼中標註並修正，不留待後續
 
-## 二、交付規範 (PR & Sync)
+## 二、自動化合併 (Auto-Merge Policy)
 - 所有代碼變動**禁止**直接推送到 master/main 分支
-- 代碼審核通過後，必須自動建立新分支並發起 Pull Request
-- **任務完成的定義**：提供 GitHub PR 連結給使用者
+- 修改後自動建立新分支並發起 PR，接著直接執行合併完成任務
+- **代碼變更任務完成的定義**：PR 已合併，提供 GitHub commit/PR 連結給使用者
+- 若遇衝突或測試失敗才請求人工介入
 - 推送前確認分支名稱正確
 
 ## 三、精簡原則
@@ -23,6 +24,16 @@
 - 不要新增不必要的抽象層或 helper
 - 不要為假設性未來需求設計
 - 修改任何檔案前必須先 Read 讀取
+
+## 四、UI 強制更新邏輯（Streamlit 專用）
+側邊欄必須包含以下快取清除按鈕，確保使用者可強制載入最新 GitHub 邏輯：
+```python
+if st.sidebar.button("♻️ 強制同步 GitHub 最新邏輯"):
+    st.cache_data.clear()
+    st.cache_resource.clear()
+    st.success("已清除緩存，請重新整理網頁")
+    st.rerun()
+```
 
 ## 核心架構規則（基金儀表板專用）
 - 修改 app.py 或 macro_engine.py 前，確認版本號已更新
