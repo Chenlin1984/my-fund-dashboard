@@ -14,6 +14,9 @@ import requests, yfinance as yf, pandas as pd, numpy as np, streamlit as st, mat
 
 FRED_BASE = "https://api.stlouisfed.org/fred/series/observations"
 
+# ── 版本戳記：修改此值 = 確認 GitHub 已更新並部署至 Streamlit Cloud
+ENGINE_VERSION = "v17.1_SlopeEngine"
+
 # ── Self-healing snapshot: 記錄最後一次成功抓取的指標資料
 _INDICATOR_SNAPSHOT: dict = {}
 
@@ -54,18 +57,29 @@ def _calc_z(series: pd.Series, current_val: float) -> float | None:
 
 def get_trend_strength(series: pd.Series, window: int = 3) -> float:
     """
-    線性斜率趨勢強度（解決月報數據平躺問題）
-    取最後 window 個有效值做線性回歸，即使當期數值未更新也能感知趨勢方向。
-    相較於 diff()（只看相鄰兩期），np.polyfit 能抓住中期加速/減速訊號。
+    Smart Slope v2：非重複有效值回溯（說明書 §2，穿透「假性停滯」）
+    ─────────────────────────────────────────────────────────────
+    當月報指標（PMI、CPI 等）連續數期不更新，tail(3) 取到的是三個相同數值，
+    polyfit 斜率為 0，AI 誤判為「無趨勢」。
+
+    修正：去除連續重複值後取最後 window 個「有效轉折點」，
+    即使當前值已停滯一個月，仍能反映更早期的趨勢方向。
+    邊界保護：window < 2 個不同值時 fallback 至所有可用點。
     """
     valid = series.dropna()
-    if len(valid) < window:
+    if len(valid) < 2:
         return 0.0
-    y = valid.tail(window).values.astype(float)
+    # 去除連續重複（保留每段值的最後一次出現 → 保留最新的不重複趨勢點）
+    deduped = valid.loc[valid != valid.shift()]
+    if len(deduped) < 2:
+        # 全部相同 → 改用原始序列的最後兩點保持完整性
+        deduped = valid
+    y = deduped.tail(window).values.astype(float)
+    if len(y) < 2:
+        return 0.0
     x = np.arange(len(y))
     try:
         slope, _ = np.polyfit(x, y, 1)
-        # clip 避免新數據剛發布時斜率劇烈跳動
         return round(float(np.clip(slope, -1e6, 1e6)), 4)
     except Exception:
         return 0.0

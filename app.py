@@ -15,7 +15,7 @@ def _now_tw():
 import plotly.graph_objects as go
 import pandas as pd, numpy as np
 
-from macro_engine import fetch_all_indicators, calc_macro_phase
+from macro_engine import fetch_all_indicators, calc_macro_phase, ENGINE_VERSION
 from fund_fetcher  import (fetch_fund_by_key, search_moneydj_by_name,
                             fetch_fund_structure, fetch_fund_from_moneydj_url,
                             tdcc_search_fund,
@@ -212,8 +212,14 @@ with st.sidebar:
     st.markdown("## 📊 基金監控 AI 戰情室")
     _sb_upd = st.session_state.get("macro_last_update")
     _sb_upd_str = _sb_upd.strftime("%m/%d %H:%M") if _sb_upd else "未載入"
-    st.caption(f"v17.0 ‧ {_now_tw().strftime('%Y-%m-%d %H:%M')} (TW)")
+    st.caption(f"v17.1 ‧ {_now_tw().strftime('%Y-%m-%d %H:%M')} (TW)")
     st.caption(f"📡 總經更新：{_sb_upd_str}")
+    # ── 版本戳記（PR 驗證機制：看到這行變更 = GitHub 已部署）
+    st.markdown(
+        f"<div style='background:#0d1117;border:1px solid #30363d;border-radius:6px;"
+        f"padding:5px 10px;font-size:10px;color:#888;text-align:center'>"
+        f"⚙️ Engine: <b style='color:#00c853'>{ENGINE_VERSION}</b></div>",
+        unsafe_allow_html=True)
     st.divider()
 
     # ── API 狀態 ────────────────────────────────────────
@@ -222,14 +228,16 @@ with st.sidebar:
         f"{'✅' if GEMINI_KEY else '❌'} Gemini"
     )
 
-    # ── 強制重算按鈕（說明書 §3：Session State 強制刷新）
-    if st.button("🔄 強制重算所有拐點", use_container_width=True,
-                 help="清除所有快取並強制重新抓取 FRED / Yahoo Finance 最新數據"):
-        fetch_all_indicators.clear()
+    # ── PR 級別重整按鈕（說明書 §3：st.cache_data + st.cache_resource 全清）
+    if st.button("♻️ PR 級別重整（強制清除快照）", use_container_width=True,
+                 help="清除 cache_data + cache_resource，確保載入 GitHub 最新邏輯。完成後請手動 F5 重整網頁。"):
+        st.cache_data.clear()
+        st.cache_resource.clear()
         st.session_state["macro_done"]        = False
         st.session_state["indicators"]        = {}
         st.session_state["phase_info"]        = {}
         st.session_state["macro_last_update"] = None
+        st.success(f"✅ 快取已全清！Engine: {ENGINE_VERSION} — 請按 F5 重整網頁載入最新邏輯。")
         st.rerun()
     st.divider()
 
