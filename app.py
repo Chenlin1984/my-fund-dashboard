@@ -1457,7 +1457,7 @@ with tab1:
             if _stale:
                 st.warning(f"⏰ 總經資料已 {_age_h:.1f} 小時未更新（上次：{_upd_str}），建議重新載入")
             else:
-                st.caption(f"🕐 最後更新：{_upd_str}（{_age_h:.1f} 小時前）")
+                st.caption(f"🕐 最後從 FRED 抓取：{_upd_str}（{_age_h:.1f} 小時前）｜PMI / 失業率為月頻資料，每月更新一次")
         else:
             st.info("💡 尚未載入總經資料，點擊下方按鈕開始")
 
@@ -1465,7 +1465,11 @@ with tab1:
         _auto_load = (not st.session_state.macro_done) or _stale
         _btn_label = "🔄 更新總經資料" if st.session_state.macro_done else "📡 載入總經資料"
 
-        if st.button(_btn_label, type="primary") or _auto_load:
+        _btn_clicked = st.button(_btn_label, type="primary")
+        # Fix: clear st.cache_data when button clicked or stale, so fresh FRED data is fetched
+        if _btn_clicked or _stale:
+            fetch_all_indicators.clear()
+        if _btn_clicked or _auto_load:
             with st.spinner("📡 從 FRED / Yahoo Finance 抓取最新指標..."):
                 ind   = fetch_all_indicators(FRED_KEY)
                 phase = calc_macro_phase(ind)
@@ -1484,7 +1488,15 @@ with tab1:
                 st.session_state.macro_ai         = ""
                 st.session_state.macro_last_update = _now_tw()  # Fix: use TW timezone
                 if not _auto_load:
-                    st.success(f"✅ 已更新！{len(ind)} 個指標（{_now_tw().strftime('%H:%M')} TW）")
+                    # Show latest FRED data date for key monthly indicators
+                    _pmi_date = ind.get("PMI", {}).get("date", "")
+                    _unrate_date = ind.get("UNRATE", {}).get("date", "")
+                    _note = ""
+                    if _pmi_date:
+                        _note += f" | PMI 資料期：{_pmi_date}"
+                    if _unrate_date:
+                        _note += f" | 失業率資料期：{_unrate_date}"
+                    st.success(f"✅ 已從 FRED 抓取最新資料！{len(ind)} 個指標（{_now_tw().strftime('%H:%M')} TW）{_note}")
 
     if not st.session_state.macro_done:
         st.info("👆 點擊「載入總經資料」開始分析")
