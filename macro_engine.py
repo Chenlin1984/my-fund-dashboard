@@ -124,14 +124,33 @@ def _detect_inflection(indicators):
     signals = []; score = 0
     def _chk(key, attr="value"): return indicators.get(key,{}).get(attr)
 
-    pmi_v = _chk("PMI"); pmi_p = _chk("PMI","prev")
-    if pmi_v and pmi_p:
-        if pmi_v < 50 and pmi_v > pmi_p:
-            signals.append({"type":"buy","text":f"PMI {pmi_v:.1f} 收縮區但止跌反彈（+{pmi_v-pmi_p:.1f}）— 復甦訊號"}); score += 2
-        elif pmi_v >= 50 and pmi_v > pmi_p:
-            signals.append({"type":"bull","text":f"PMI {pmi_v:.1f} 擴張且上升"}); score += 1
-        elif pmi_v >= 55 and pmi_v < pmi_p:
-            signals.append({"type":"warn","text":f"PMI {pmi_v:.1f} 高位回落，景氣可能見頂"}); score -= 1
+    # ── PMI（改用線性斜率，解決數據平躺問題）──────────────────
+    pmi_v     = _chk("PMI"); pmi_p = _chk("PMI","prev")
+    pmi_slope = _chk("PMI","trend_slope")  # 由 get_trend_strength() 計算
+    if pmi_v is not None:
+        if pmi_slope is not None:
+            # 斜率判斷（比 diff 更早感知轉折）
+            if pmi_v < 50 and pmi_slope > 0.05:
+                signals.append({"type":"buy",
+                    "text":f"PMI {pmi_v:.1f} 收縮但斜率轉正 +{pmi_slope:.2f}（底部反彈訊號）"}); score += 2
+            elif pmi_v >= 50 and pmi_slope > 0.05:
+                signals.append({"type":"bull",
+                    "text":f"PMI {pmi_v:.1f} 擴張加速（斜率 +{pmi_slope:.2f}）"}); score += 1
+            elif pmi_v >= 50 and pmi_slope < -0.05:
+                # 擴張區但斜率轉負 → 景氣減速拐點（說明書 §2 關鍵判定）
+                signals.append({"type":"warn",
+                    "text":f"⚠️ PMI {pmi_v:.1f} 擴張但加速放緩（斜率 {pmi_slope:.2f}），景氣可能見頂"}); score -= 2
+            elif pmi_v < 50 and pmi_slope < -0.05:
+                signals.append({"type":"warn",
+                    "text":f"PMI {pmi_v:.1f} 收縮且持續惡化（斜率 {pmi_slope:.2f}）"}); score -= 1
+        elif pmi_v and pmi_p:
+            # fallback：無斜率時仍保留原始 diff 比較
+            if pmi_v < 50 and pmi_v > pmi_p:
+                signals.append({"type":"buy","text":f"PMI {pmi_v:.1f} 收縮區止跌反彈（+{pmi_v-pmi_p:.1f}）"}); score += 2
+            elif pmi_v >= 50 and pmi_v > pmi_p:
+                signals.append({"type":"bull","text":f"PMI {pmi_v:.1f} 擴張且上升"}); score += 1
+            elif pmi_v >= 55 and pmi_v < pmi_p:
+                signals.append({"type":"warn","text":f"PMI {pmi_v:.1f} 高位回落，景氣可能見頂"}); score -= 1
 
     y22 = indicators.get("YIELD_10Y2Y",{})
     v22 = y22.get("value"); p22 = y22.get("prev")
@@ -479,8 +498,9 @@ def fetch_all_indicators(fred_api_key, cache_date: str = ""):
                 _d["trend_slope"] = None
         else:
             _d["trend_slope"] = None
-        # 停滯天數
+        # 停滯天數 + is_stale 旗標（說明書 §2：ffill 後回傳旗標讓 UI 標註新鮮度）
         _d["days_stale"] = _calc_days_stale(_d.get("date", ""))
+        _d["is_stale"]   = bool(_d["days_stale"] is not None and _d["days_stale"] > 20)
 
     # ── Self-healing snapshot：若成功取得 ≥5 個指標，更新快照
     global _INDICATOR_SNAPSHOT
@@ -493,6 +513,66 @@ def fetch_all_indicators(fred_api_key, cache_date: str = ""):
         return {k: dict(v) for k, v in _INDICATOR_SNAPSHOT.items()}
 
     return R
+
+
+def get_market_phase(indicators: dict) -> dict:
+    """
+    二維景氣位階判定（說明書 §3）：Z-Score 位階 × 線性斜率方向
+    ─────────────────────────────────────────────────────────────
+    以 PMI 為主要代表指標（最高權重領先指標），結合 Z-Score 與 trend_slope：
+
+      復甦 (Recovery) : Z 低位(< -0.5) + Slope 轉正(> +0.05)
+      擴張 (Expansion): Z 中位         + Slope 為正(> 0)
+      減速 (Slowdown) : Z 高位(> +0.5) + Slope 轉負(< -0.05) ← 關鍵拐點
+      衰退 (Recession): Z 低位         + Slope 為負(< 0)
+
+    回傳字典可直接補充至 calc_macro_phase() 輸出，作為第二層確認。
+    """
+    def _get(key, attr): return (indicators.get(key) or {}).get(attr)
+
+    # ── 以 PMI + YIELD_10Y2Y + HY_SPREAD 三個領先指標投票
+    _phases = []
+    for _key in ("PMI", "YIELD_10Y2Y", "HY_SPREAD"):
+        _z  = _get(_key, "z_score")
+        _sl = _get(_key, "trend_slope")
+        if _z is None or _sl is None:
+            continue
+        # 反向指標（HY 利差越大越壞）
+        _inv = -1 if _key == "HY_SPREAD" else 1
+        _z_adj  = _z  * _inv
+        _sl_adj = _sl * _inv
+
+        if _z_adj < -0.5 and _sl_adj > 0.05:
+            _phases.append("復甦")
+        elif _z_adj > 0.5 and _sl_adj < -0.05:
+            _phases.append("減速")   # 最重要的高位轉負訊號
+        elif _sl_adj > 0:
+            _phases.append("擴張")
+        else:
+            _phases.append("衰退")
+
+    if not _phases:
+        return {"phase2d": "未知", "phase2d_color": "#888", "phase2d_desc": "資料不足"}
+
+    # 多數決
+    from collections import Counter
+    _winner = Counter(_phases).most_common(1)[0][0]
+    _vote_ratio = Counter(_phases).most_common(1)[0][1] / len(_phases)
+
+    _map = {
+        "復甦": ("#64b5f6", "Z 低位 + 斜率翻正，景氣底部確認，逢低布局機會"),
+        "擴張": ("#00c853", "Z 中位 + 斜率向上，成長動能充足，持有風險資產"),
+        "減速": ("#ff9800", "Z 高位 + 斜率轉負，擴張減速拐點！考慮調降衛星比重"),
+        "衰退": ("#f44336", "Z 低位 + 斜率向下，景氣收縮，轉向防禦配置"),
+    }
+    _color, _desc = _map.get(_winner, ("#888", ""))
+    return {
+        "phase2d":        _winner,
+        "phase2d_color":  _color,
+        "phase2d_desc":   _desc,
+        "phase2d_votes":  dict(Counter(_phases)),
+        "phase2d_conf":   round(_vote_ratio * 100),
+    }
 
 
 def get_synced_dashboard_data(raw_data_dict: dict, lookback_days: int = 30) -> pd.DataFrame:
@@ -789,6 +869,8 @@ def calc_macro_phase(indicators: dict) -> dict:
 
     # 成長/通膨雙軸分析（文件建議 §1 二象限循環判定）
     growth_inflation = calc_growth_inflation_axis(indicators)
+    # Z-Score × Slope 二維景氣位階（說明書 §3）
+    market_phase_2d  = get_market_phase(indicators)
 
     return dict(
         score=score, phase=phase, phase_en=phase_en,
@@ -807,6 +889,7 @@ def calc_macro_phase(indicators: dict) -> dict:
         alloc_transition=alloc_transition,
         # 雙軸分析
         growth_inflation=growth_inflation,
+        market_phase_2d=market_phase_2d,
         # 保留舊 key 供 AI engine 使用
         inflection=mk_signals.get("inflection",{}),
         signals=mk_signals.get("signals",[]),

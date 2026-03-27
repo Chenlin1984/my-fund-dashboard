@@ -1673,6 +1673,40 @@ with tab1:
             f"</div></div>",
             unsafe_allow_html=True)
 
+        # ── Z-Score × Slope 二維景氣確認卡（說明書 §3 get_market_phase）
+        _mp2d = phase.get("market_phase_2d", {})
+        if _mp2d and _mp2d.get("phase2d","") != "未知":
+            _p2d      = _mp2d.get("phase2d", "")
+            _p2d_col  = _mp2d.get("phase2d_color", "#888")
+            _p2d_desc = _mp2d.get("phase2d_desc", "")
+            _p2d_conf = _mp2d.get("phase2d_conf", 0)
+            _p2d_icon = {"復甦":"🌱","擴張":"📈","減速":"⚠️","衰退":"🌧️"}.get(_p2d,"🔍")
+            _p2d_agree = cur_phase in (_p2d,) or \
+                         (cur_phase == "擴張" and _p2d == "擴張") or \
+                         (cur_phase == "衰退" and _p2d == "衰退")
+            _conf_bar_w = _p2d_conf
+            _conf_bar_c = "#00c853" if _p2d_conf >= 67 else "#ff9800"
+            st.markdown(
+                f"<div style='background:#0a1628;border:1px solid {_p2d_col};border-left:4px solid {_p2d_col};"
+                f"border-radius:10px;padding:12px 16px;margin:6px 0;"
+                f"display:flex;align-items:center;gap:14px'>"
+                f"<div style='font-size:22px'>{_p2d_icon}</div>"
+                f"<div style='flex:1'>"
+                f"<div style='font-size:10px;color:#666;letter-spacing:1px'>Z-Score × 斜率二維確認</div>"
+                f"<div style='display:flex;align-items:baseline;gap:8px;margin:2px 0'>"
+                f"<span style='font-size:16px;font-weight:900;color:{_p2d_col}'>{_p2d}</span>"
+                f"<span style='font-size:11px;color:#888'>{_p2d_desc}</span>"
+                f"</div>"
+                f"<div style='display:flex;align-items:center;gap:6px;margin-top:4px'>"
+                f"<span style='font-size:10px;color:#666'>信心度</span>"
+                f"<div style='flex:1;background:#161b22;border-radius:3px;height:5px'>"
+                f"<div style='background:{_conf_bar_c};width:{_conf_bar_w}%;height:100%;border-radius:3px'></div></div>"
+                f"<span style='font-size:10px;color:{_conf_bar_c}'>{_p2d_conf}%</span>"
+                f"<span style='font-size:10px;color:{'#00c853' if _p2d_agree else '#ff9800'};margin-left:8px'>"
+                f"{'✅ 與加權評分一致' if _p2d_agree else '⚠️ 與加權評分分歧，請留意'}</span>"
+                f"</div></div></div>",
+                unsafe_allow_html=True)
+
         _render_macro_dashboard(ind, phase)
 
         # ── TAA 戰術配置警告（文件建議 §3：連動持倉）─────────────
