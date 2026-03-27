@@ -212,7 +212,7 @@ with st.sidebar:
     st.markdown("## 📊 基金監控 AI 戰情室")
     _sb_upd = st.session_state.get("macro_last_update")
     _sb_upd_str = _sb_upd.strftime("%m/%d %H:%M") if _sb_upd else "未載入"
-    st.caption(f"v16.0 ‧ {_now_tw().strftime('%Y-%m-%d %H:%M')} (TW)")
+    st.caption(f"v17.0 ‧ {_now_tw().strftime('%Y-%m-%d %H:%M')} (TW)")
     st.caption(f"📡 總經更新：{_sb_upd_str}")
     st.divider()
 
@@ -221,6 +221,16 @@ with st.sidebar:
         f"{'✅' if FRED_KEY else '❌'} FRED　　"
         f"{'✅' if GEMINI_KEY else '❌'} Gemini"
     )
+
+    # ── 強制重算按鈕（說明書 §3：Session State 強制刷新）
+    if st.button("🔄 強制重算所有拐點", use_container_width=True,
+                 help="清除所有快取並強制重新抓取 FRED / Yahoo Finance 最新數據"):
+        fetch_all_indicators.clear()
+        st.session_state["macro_done"]        = False
+        st.session_state["indicators"]        = {}
+        st.session_state["phase_info"]        = {}
+        st.session_state["macro_last_update"] = None
+        st.rerun()
     st.divider()
 
     # ── 核心/衛星目標 ────────────────────────────────────
@@ -846,6 +856,34 @@ def _render_macro_dashboard(ind, phase_info):
                           f'border:1px solid {_zc};margin-left:4px" '
                           f'title="Z-Score = {_z}（相對2年均值的標準差位置）">'
                           f'Z={_z:+.1f} {_zlbl}</span>')
+            # 趨勢斜率 badge（解決月報平躺問題，改用 np.polyfit 斜率）
+            _slope = d.get("trend_slope")
+            _stale = d.get("days_stale")
+            _slope_html = ""
+            if _slope is not None:
+                _abs_s = abs(_slope)
+                if _abs_s < 0.005:
+                    _slope_html = '<span style="color:#555;font-size:9px;margin-left:4px">▬ 平穩</span>'
+                elif _slope > 0:
+                    _sc = "#00c853" if _abs_s > 0.1 else "#69f0ae"
+                    _slope_html = (f'<span style="color:{_sc};font-size:9px;margin-left:4px">'
+                                   f'⚡ 加速↑ +{_slope:.3f}</span>')
+                else:
+                    _sc = "#f44336" if _abs_s > 0.1 else "#ff7043"
+                    _slope_html = (f'<span style="color:{_sc};font-size:9px;margin-left:4px">'
+                                   f'⚡ 加速↓ {_slope:.3f}</span>')
+            # 停滯天數 badge
+            _stale_html = ""
+            if _stale is not None:
+                if _stale > 45:
+                    _stale_html = (f'<span style="color:#f44336;font-size:9px;margin-left:4px">'
+                                   f'⚠️ 停滯 {_stale}天</span>')
+                elif _stale > 20:
+                    _stale_html = (f'<span style="color:#ff9800;font-size:9px;margin-left:4px">'
+                                   f'⚠️ {_stale}天前</span>')
+                else:
+                    _stale_html = (f'<span style="color:#555;font-size:9px;margin-left:4px">'
+                                   f'📅 {_stale}天前</span>')
             _h  = (f'<div style="background:#0d1117;border:1px solid #21262d;border-radius:10px;'
                    f'padding:12px 14px;margin-bottom:8px;min-height:88px">'
                    f'<div style="display:flex;justify-content:space-between;align-items:flex-start">'
@@ -853,12 +891,14 @@ def _render_macro_dashboard(ind, phase_info):
                    f'<div style="color:#888;font-size:10px">{typ} {stars} (w={w})</div>'
                    f'<div style="color:#c9d1d9;font-size:12px;font-weight:600">{_n}</div>'
                    f'</div>{spark_html}</div>'
-                   f'<div style="display:flex;align-items:baseline;gap:6px;margin-top:4px">'
+                   f'<div style="display:flex;align-items:baseline;gap:6px;margin-top:4px;flex-wrap:wrap">'
                    f'<span style="color:{col};font-size:22px;font-weight:800">{_vf}</span>'
                    f'<span style="color:#555;font-size:11px">{unit}</span>'
                    f'{diff_str}'
                    f'<span style="font-size:16px;margin-left:4px">{sig}</span>'
                    f'{_zhtml}'
+                   f'{_slope_html}'
+                   f'{_stale_html}'
                    f'</div>'
                    f'<div style="color:#555;font-size:10px;margin-top:2px;line-height:1.4">{desc}</div>'
                    f'</div>')
@@ -1458,7 +1498,8 @@ with tab1:
             fetch_all_indicators.clear()
         if _btn_clicked or _auto_load:
             with st.spinner("📡 從 FRED / Yahoo Finance 抓取最新指標..."):
-                ind   = fetch_all_indicators(FRED_KEY)
+                # 傳入今日日期作為 cache key，確保每天自動失效一次
+                ind   = fetch_all_indicators(FRED_KEY, cache_date=datetime.date.today().isoformat())
                 phase = calc_macro_phase(ind)
                 old_phase = st.session_state.phase_info.get("phase","") if st.session_state.phase_info else ""
                 new_phase = phase.get("phase","")

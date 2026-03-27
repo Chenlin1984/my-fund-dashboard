@@ -52,6 +52,40 @@ def _calc_z(series: pd.Series, current_val: float) -> float | None:
     return round((current_val - mu) / sigma, 2)
 
 
+def get_trend_strength(series: pd.Series, window: int = 3) -> float:
+    """
+    線性斜率趨勢強度（解決月報數據平躺問題）
+    取最後 window 個有效值做線性回歸，即使當期數值未更新也能感知趨勢方向。
+    相較於 diff()（只看相鄰兩期），np.polyfit 能抓住中期加速/減速訊號。
+    """
+    valid = series.dropna()
+    if len(valid) < window:
+        return 0.0
+    y = valid.tail(window).values.astype(float)
+    x = np.arange(len(y))
+    try:
+        slope, _ = np.polyfit(x, y, 1)
+        # clip 避免新數據剛發布時斜率劇烈跳動
+        return round(float(np.clip(slope, -1e6, 1e6)), 4)
+    except Exception:
+        return 0.0
+
+
+def _calc_days_stale(date_str: str) -> int | None:
+    """計算距離 FRED 最後發布日的天數（用於停滯警示）"""
+    if not date_str or date_str == "即時":
+        return None
+    try:
+        s = str(date_str).strip()[:10]
+        if len(s) == 7:          # "YYYY-MM" → 月底
+            dt = pd.Timestamp(s + "-01") + pd.offsets.MonthEnd(0)
+        else:
+            dt = pd.Timestamp(s)
+        return max(0, (pd.Timestamp.now() - dt).days)
+    except Exception:
+        return None
+
+
 def _trend(vals):
     if len(vals) < 3: return ""
     diffs = [vals[i]-vals[i-1] for i in range(1, len(vals))]
@@ -150,7 +184,11 @@ def _detect_inflection(indicators):
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def fetch_all_indicators(fred_api_key):
+def fetch_all_indicators(fred_api_key, cache_date: str = ""):
+    """
+    cache_date: 傳入當日日期字串（YYYY-MM-DD）作為 cache key 的一部分，
+    確保每天自動失效一次，即使 TTL 還沒到期。
+    """
     R = {}
 
     # ── PMI ⭐⭐⭐⭐⭐（最核心，weight=2）─────────────────────────
@@ -421,10 +459,11 @@ def fetch_all_indicators(fred_api_key):
             score=0.5 if v>p else -0.5,
             weight=0.5, series=s)
 
-    # ── Post-process：計算各指標 Z-Score（相對於 2 年歷史的標準化位置）
+    # ── Post-process：Z-Score + 線性斜率趨勢 + 停滯天數
     for _key, _d in R.items():
         _series = _d.get("series")
         _val    = _d.get("value")
+        # Z-Score
         if _val is not None and _series is not None and hasattr(_series, "__len__"):
             try:
                 _d["z_score"] = _calc_z(_series, float(_val))
@@ -432,6 +471,16 @@ def fetch_all_indicators(fred_api_key):
                 _d["z_score"] = None
         else:
             _d["z_score"] = None
+        # 線性斜率（解決月報平躺問題）
+        if _series is not None and hasattr(_series, "dropna"):
+            try:
+                _d["trend_slope"] = get_trend_strength(_series, window=3)
+            except Exception:
+                _d["trend_slope"] = None
+        else:
+            _d["trend_slope"] = None
+        # 停滯天數
+        _d["days_stale"] = _calc_days_stale(_d.get("date", ""))
 
     # ── Self-healing snapshot：若成功取得 ≥5 個指標，更新快照
     global _INDICATOR_SNAPSHOT
