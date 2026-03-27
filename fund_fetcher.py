@@ -7,7 +7,7 @@
 #            請回報給開發者更新解析邏輯。
 # =================================================
 #!/usr/bin/env python3
-"""fund_fetcher.py v6.4
+"""fund_fetcher.py v6.5
 v6.4 修正:
 - fetch_performance_wb01(): 雙策略解析，多 URL fallback
 - fetch_risk_metrics(): 更強健的欄位偵測，多 URL fallback
@@ -1163,6 +1163,7 @@ def _src_nav_30day(code: str, page_type: str = "") -> pd.Series:
 
     bases = [
         "https://tcbbankfund.moneydj.com/funddj",
+        "https://chubb.moneydj.com/funddj",
         "https://www.moneydj.com/funddj",
     ]
 
@@ -1220,25 +1221,43 @@ def _src_nav_30day(code: str, page_type: str = "") -> pd.Series:
 
 def _src_tcb_nav(code: str) -> pd.Series:
     """
-    TCB MoneyDJ 子網域歷史淨值。
-    v13.3 修正：
-      ① params(A/B/C) 正確傳入 fetch_url_with_retry
-      ② 境內基金(ACTI)使用 yp010000 referer，境外用 yp010001
+    TCB / MoneyDJ 子網域歷史淨值。
+    依照原始 fetch_nav 順序，逐一嘗試各子網域與端點。
     """
     import datetime as _dt
-    rows = {}
-    base  = "https://tcbbankfund.moneydj.com/funddj"
+    import re as _re2
     today = _dt.date.today()
     start = today - _dt.timedelta(days=400)
-    # ① 正確的 params（之前漏傳，導致拿不到歷史區間資料）
+
+    # ── 優先嘗試原始 wf01/wb02 路徑（原始版本使用，簡單 ?a= 即可）
+    _simple_urls = [
+        f"https://tcbbankfund.moneydj.com/w/wf/wf01.djhtm?a={code}",
+        f"https://tcbbankfund.moneydj.com/w/wb/wb02.djhtm?a={code}",
+        f"https://chubb.moneydj.com/w/wf/wf01.djhtm?a={code}",
+        f"https://www.moneydj.com/funddj/yf/yp004001.djhtm?a={code}",
+    ]
+    for _url in _simple_urls:
+        try:
+            hdr = {**HDR, "Referer": "https://www.moneydj.com/"}
+            r = fetch_url_with_retry(_url, headers=hdr, timeout=20, retries=2)
+            if r is None:
+                continue
+            s = _parse_nav_html(r.text)
+            if len(s) >= 10:
+                print(f"[src_tcb] ✅ {code} {len(s)} 筆（{_url[:55]}）")
+                return s
+            print(f"[src_tcb] {code} → {len(s)} 筆 ({_url[:45]})")
+        except Exception as e:
+            print(f"[src_tcb] {code} {_url[:45]}: {e}")
+
+    # ── 次要：yp004002 帶日期區間（需 A/B/C params）
+    base  = "https://tcbbankfund.moneydj.com/funddj"
     params = {
         "A": code,
         "B": start.strftime("%Y%m%d"),
         "C": today.strftime("%Y%m%d"),
     }
-    # v13.8: get_page_types_to_try — 首選失敗自動換頁型重試
     _primary_page = "yp010000" if _is_domestic_code(code) else "yp010001"
-    import re as _re2
     for _page in get_page_types_to_try(_primary_page):
         hdr = {**HDR,
                "Referer": f"https://tcbbankfund.moneydj.com/funddj/ya/{_page}.djhtm?a={code}"}
@@ -1248,7 +1267,6 @@ def _src_tcb_nav(code: str) -> pd.Series:
                 headers=hdr, params=params, timeout=25
             )
             if r is None:
-                print(f"[src_tcb] {code} page={_page} → None，換頁型")
                 continue
             rows = {}
             soup = BeautifulSoup(r.text, "lxml")
@@ -1264,15 +1282,15 @@ def _src_tcb_nav(code: str) -> pd.Series:
                                 rows[pd.Timestamp(dt_txt)] = v
             if len(rows) >= 10:
                 s = pd.Series(rows).sort_index()
-                print(f"[src_tcb] ✅ {code} {len(s)} 筆（page={_page}）")
+                print(f"[src_tcb] ✅ {code} {len(s)} 筆（yp004002 page={_page}）")
                 return s
-            print(f"[src_tcb] {code} page={_page} → 只有 {len(rows)} 筆，換頁型重試")
         except Exception as e:
-            print(f"[src_tcb] {code} page={_page}: {e}")
-    # v14.3: yf/yp004002 全部失敗 → fallback 近30日 nav 頁
+            print(f"[src_tcb] {code} yp004002 page={_page}: {e}")
+
+    # ── 最終 fallback：近30日
     s30 = _src_nav_30day(code)
     if len(s30) >= 10:
-        print(f"[src_tcb] ⤵ {code} yp004002 失敗，改用近30日 ({len(s30)}筆)")
+        print(f"[src_tcb] ⤵ {code} 改用近30日 ({len(s30)}筆)")
         return s30
     return pd.Series(dtype=float)
 
