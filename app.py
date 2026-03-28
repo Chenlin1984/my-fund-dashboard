@@ -18,7 +18,7 @@ import pandas as pd, numpy as np
 from macro_engine import fetch_all_indicators, calc_macro_phase, ENGINE_VERSION
 
 # ── 版本戳記：在這裡改版本號 = 確認 app.py 已部署至 Streamlit Cloud
-APP_VERSION = "v17.6_TcbForeignFix"
+APP_VERSION = "v17.7_TdccCnyesBridge"
 from fund_fetcher  import (fetch_fund_by_key, search_moneydj_by_name,
                             fetch_fund_structure, fetch_fund_from_moneydj_url,
                             tdcc_search_fund,

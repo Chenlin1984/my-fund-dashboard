@@ -7,7 +7,7 @@
 #            請回報給開發者更新解析邏輯。
 # =================================================
 #!/usr/bin/env python3
-"""fund_fetcher.py v6.10
+"""fund_fetcher.py v6.11
 v6.4 修正:
 - fetch_performance_wb01(): 雙策略解析，多 URL fallback
 - fetch_risk_metrics(): 更強健的欄位偵測，多 URL fallback
@@ -386,6 +386,26 @@ def tdcc_get_agents() -> list:
              "類股數": d.get("申報基金總類股數",""),
              "網址": d.get("總代理網址","")}
             for d in data]
+
+
+def _tdcc_resolve_fund_name(code: str) -> str:
+    """
+    v6.11: 從 TDCC 3-2 查詢境外基金中文名稱。
+    保險平台代碼（如 TLZF9）在 TDCC 登記為境外基金，可找到完整名稱。
+    """
+    _c = code.upper().strip()
+    try:
+        basic = _tdcc_get("3-2")
+        for item in basic:
+            item_code = (item.get("基金代碼") or item.get("境外基金代碼") or "").upper()
+            if item_code == _c:
+                name = item.get("基金名稱", "")
+                if name:
+                    print(f"[tdcc_resolve_name] {_c} → {name[:40]}")
+                    return name
+    except Exception as _e:
+        print(f"[tdcc_resolve_name] {_c}: {_e}")
+    return ""
 import pandas as pd
 import numpy as np
 import streamlit as st
@@ -875,38 +895,62 @@ def _cnyes_parse_navs(navs: list) -> dict:
 
 def _cnyes_resolve_code(moneydj_code: str) -> list:
     """
-    透過 cnyes search API 找出對應的 cnyes 基金代碼列表。
-    cnyes 代碼可能與 MoneyDJ 代碼不同（例如 TLZF9 在 cnyes 可能有別名）。
+    v6.11: 透過 cnyes search API 找出對應的 cnyes 基金代碼列表。
+    新增 TDCC→cnyes 名稱橋接：保險平台代碼（如 TLZF9）在 cnyes 無法直接搜到，
+    改用 TDCC 3-2 取得基金中文名稱，再用名稱搜 cnyes。
     回傳所有候選 cnyes 代碼，首位最優先。
     """
+    from urllib.parse import quote as _uquote
     _code = moneydj_code.upper().strip()
     candidates = [_code, _code.lower()]   # 先試原始代碼
-    try:
-        # cnyes fund search API
-        search_url = (
-            f"https://fund.api.cnyes.com/fund/api/v2/funds/search"
-            f"?key={_code}&limit=10"
-        )
-        r = requests.get(search_url, headers={
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-            "Accept": "application/json",
-            "Referer": "https://fund.cnyes.com/",
-        }, timeout=10)
-        if r.status_code == 200:
-            data = r.json()
-            items = (data.get("data", {}).get("list")
-                     or data.get("data")
-                     or data.get("items")
-                     or [])
-            if isinstance(items, list):
-                for item in items:
-                    c = (item.get("fundCode") or item.get("code")
+    _hdrs = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+        "Accept": "application/json",
+        "Referer": "https://fund.cnyes.com/",
+    }
+
+    def _cnyes_search(key: str, limit: int = 10) -> list:
+        """呼叫 cnyes search API，回傳 fundCode 列表"""
+        try:
+            url = (f"https://fund.api.cnyes.com/fund/api/v2/funds/search"
+                   f"?key={_uquote(key)}&limit={limit}")
+            r = requests.get(url, headers=_hdrs, timeout=10)
+            if r.status_code == 200:
+                data = r.json()
+                items = (data.get("data", {}).get("list")
+                         or data.get("data")
+                         or data.get("items")
+                         or [])
+                if isinstance(items, list):
+                    return [
+                        (item.get("fundCode") or item.get("code")
                          or item.get("id") or "")
-                    if c and c not in candidates:
-                        candidates.append(c)
-                print(f"[cnyes_search] {_code} → 候選: {candidates[:5]}")
-    except Exception as _e:
-        print(f"[cnyes_search] {_code}: {_e}")
+                        for item in items
+                        if (item.get("fundCode") or item.get("code") or item.get("id"))
+                    ]
+        except Exception as _e:
+            print(f"[cnyes_search] key={key!r}: {_e}")
+        return []
+
+    # Step 1: 直接用原始代碼搜
+    found = _cnyes_search(_code)
+    for c in found:
+        if c and c not in candidates:
+            candidates.append(c)
+    print(f"[cnyes_search] {_code} 直接搜 → 候選: {candidates[:5]}")
+
+    # Step 2: 若直接搜無新代碼，嘗試 TDCC 3-2 名稱橋接（適用保險平台代碼）
+    if len(candidates) <= 2:
+        tdcc_name = _tdcc_resolve_fund_name(_code)
+        if tdcc_name:
+            # 用基金名稱前 20 字元搜 cnyes（避免過長關鍵字無結果）
+            key_short = tdcc_name[:20]
+            found_by_name = _cnyes_search(key_short, limit=5)
+            for c in found_by_name:
+                if c and c not in candidates:
+                    candidates.append(c)
+            print(f"[cnyes_search] {_code} 名稱橋接 '{key_short}' → 候選: {candidates[:8]}")
+
     return candidates
 
 
