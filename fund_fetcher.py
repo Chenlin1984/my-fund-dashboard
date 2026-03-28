@@ -7,7 +7,7 @@
 #            請回報給開發者更新解析邏輯。
 # =================================================
 #!/usr/bin/env python3
-"""fund_fetcher.py v6.12
+"""fund_fetcher.py v6.13
 v6.4 修正:
 - fetch_performance_wb01(): 雙策略解析，多 URL fallback
 - fetch_risk_metrics(): 更強健的欄位偵測，多 URL fallback
@@ -1467,6 +1467,7 @@ def _src_tcb_meta(code: str) -> dict:
         f"/yp/{_info_page}.djhtm?a={code}",
         f"/ya/{_pages[1]}.djhtm?a={code}",    # 備用：換頁型重試
     ]
+    meta = {}  # Bug fix: 初始化 meta，避免後續 meta["fund_name"] 拋 NameError
     for path in _meta_paths:
         try:
             r = fetch_url_with_retry(f"{base}{path}", timeout=20)
@@ -3048,7 +3049,7 @@ def fetch_holdings(code: str) -> dict:
             f"{BASE}/yp/{_hold_page}.djhtm?a={code}",
             headers=HDR, timeout=20, retries=2
         )
-        if r.status_code != 200:
+        if r is None or r.status_code != 200:  # Bug fix: r 可能為 None（fetch_url_with_retry 全失敗時）
             return {}
         soup = BeautifulSoup(r.text, "lxml")
         out = {}
