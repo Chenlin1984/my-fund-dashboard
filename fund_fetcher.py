@@ -7,7 +7,7 @@
 #            請回報給開發者更新解析邏輯。
 # =================================================
 #!/usr/bin/env python3
-"""fund_fetcher.py v6.7
+"""fund_fetcher.py v6.8
 v6.4 修正:
 - fetch_performance_wb01(): 雙策略解析，多 URL fallback
 - fetch_risk_metrics(): 更強健的欄位偵測，多 URL fallback
@@ -418,6 +418,21 @@ PORTAL_CFG = {
 }
 # 台灣合作金庫 MoneyDJ 子網域（公開可存取，同架構）
 TCB_BASE = "https://tcbbankfund.moneydj.com"
+
+# v6.8: 保險公司 MoneyDJ 子網域推測（依代碼前綴）
+# 當 tcbbankfund 無此基金時，嘗試對應保險公司專屬子網域
+_INSURANCE_SUBDOMAIN_HINTS = {
+    "TL":  ["tlife", "twlife", "taiwanlife", "tlins", "tlinsfund"],   # 台灣人壽
+    "FL":  ["franklintem", "franklin", "fltempleton", "flintl"],       # 富蘭克林坦伯頓
+    "CT":  ["cathaylife", "ctbclife", "ctlife"],                        # 國泰/中信人壽
+    "ANZ": ["anz", "anzfund"],                                          # ANZ 銀行
+    "JF":  ["jpmorgan", "jpmf", "jpmfund"],                            # JP Morgan
+    "NN":  ["ing", "nnfund", "nnip"],                                   # NN Investment
+    "FS":  ["fslife", "fubon", "fubonlife"],                            # 富邦人壽
+    "NS":  ["nanshan", "nanshanlife"],                                  # 南山人壽
+    "CH":  ["chinalife", "chinalifeins"],                               # 中國人壽
+    "SN":  ["sinon", "sinonlife"],                                      # 新光人壽
+}
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -1634,6 +1649,69 @@ def fetch_fund_multi_source(code: str,
     }
 
 
+def _src_insurance_subdomain_nav(code: str) -> pd.Series:
+    """
+    v6.8: 根據代碼前綴推測保險公司 MoneyDJ 子網域，逐一嘗試。
+    當 tcbbankfund 無此基金時（如 TLZF9 屬台灣人壽、FLFM1 屬富蘭克林）才啟動。
+    """
+    _code = code.upper().strip()
+    portals = []
+    for prefix, names in _INSURANCE_SUBDOMAIN_HINTS.items():
+        if _code.startswith(prefix):
+            portals.extend(names)
+    if not portals:
+        return pd.Series(dtype=float)
+
+    import datetime as _dt
+    today = _dt.date.today()
+    start = today - _dt.timedelta(days=400)
+
+    for portal in portals:
+        base = f"https://{portal}.moneydj.com"
+        # 先試簡單的 wf01/wb02（無需日期參數）
+        for path in [f"/w/wf/wf01.djhtm?a={_code}",
+                     f"/w/wb/wb02.djhtm?a={_code}"]:
+            try:
+                r = fetch_url_with_retry(base + path, timeout=6, retries=1)
+                if r is None:
+                    continue
+                s = _parse_nav_html(r.text)
+                if len(s) >= 10:
+                    print(f"[src_ins] ✅ {_code} @ {portal} wf01/wb02 → {len(s)} 筆")
+                    return s
+            except Exception as _e:
+                print(f"[src_ins] {portal} {path}: {_e}")
+        # 再試 yp004002（帶日期）
+        params = {"A": _code, "B": start.strftime("%Y%m%d"), "C": today.strftime("%Y%m%d")}
+        for page in ["yp010001", "yp010000"]:
+            hdr = {**HDR, "Referer": f"{base}/funddj/ya/{page}.djhtm?a={_code}"}
+            try:
+                r = fetch_url_with_retry(f"{base}/funddj/yf/yp004002.djhtm",
+                                         headers=hdr, params=params, timeout=8, retries=1)
+                if r is None:
+                    continue
+                import re as _re_ins
+                rows = {}
+                soup = BeautifulSoup(r.text, "lxml")
+                for tbl in soup.find_all("table"):
+                    for row in tbl.find_all("tr"):
+                        cells = row.find_all("td")
+                        if len(cells) >= 2:
+                            dt_t = cells[0].get_text(strip=True)
+                            nv_t = cells[1].get_text(strip=True).replace(",", "")
+                            if _re_ins.match(r"\d{4}/\d{2}/\d{2}", dt_t):
+                                v = safe_float(nv_t)
+                                if v:
+                                    rows[pd.Timestamp(dt_t)] = v
+                if len(rows) >= 10:
+                    s = pd.Series(rows).sort_index()
+                    print(f"[src_ins] ✅ {_code} @ {portal} yp004002 → {len(s)} 筆")
+                    return s
+            except Exception as _e:
+                print(f"[src_ins] {portal} yp004002: {_e}")
+    return pd.Series(dtype=float)
+
+
 def _fetch_fund_single(code: str, force_refresh: bool = False,
                        page_type: str = "") -> dict:
     """單一代碼的多來源抓取（由 fetch_fund_multi_source 呼叫）"""
@@ -1707,6 +1785,15 @@ def _fetch_fund_single(code: str, force_refresh: bool = False,
         nav_s = _src_tcb_nav(_code)
         if len(nav_s) >= 10:
             nav_source = "tcb_moneydj"
+
+    # 2c2. v6.8: 保險公司專屬 MoneyDJ 子網域（TL=台灣人壽, FL=富蘭克林 等）
+    if len(nav_s) < 10:
+        _ins_s = _src_insurance_subdomain_nav(_code)
+        if len(_ins_s) >= 10:
+            nav_s = _ins_s
+            nav_source = "insurance_subdomain"
+            result.setdefault("source_trace", []).append(
+                {"source": "insurance_subdomain", "success": True, "nav_count": len(_ins_s)})
 
     # 2d. www.moneydj.com（主站，最後才試，IP 限制多）
     if len(nav_s) < 10:

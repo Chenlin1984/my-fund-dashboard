@@ -1997,6 +1997,15 @@ with tab3:
             else:
                 _err = fd_raw.get("error", "所有來源均無法取得資料")
                 st.error(f"❌ {_err}")
+                # v6.8: 顯示 source_trace 幫助診斷
+                _trace = fd_raw.get("source_trace", [])
+                if _trace:
+                    with st.expander("🔍 來源追蹤（診斷用）", expanded=False):
+                        for _t in _trace:
+                            _icon = "✅" if _t.get("success") else "❌"
+                            _te = f" ({_t['error'][:50]})" if _t.get("error") else ""
+                            _cnt = f" {_t['nav_count']}筆" if _t.get("nav_count") else ""
+                            st.markdown(f"- {_icon} `{_t.get('source','?')}`{_cnt}{_te}")
 
             # ── 資料完整性診斷條（個股）────────────────────────────────
             _perf_d  = fd_raw.get("perf", {}) or {}
