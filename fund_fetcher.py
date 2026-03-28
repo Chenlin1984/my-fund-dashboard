@@ -7,7 +7,7 @@
 #            請回報給開發者更新解析邏輯。
 # =================================================
 #!/usr/bin/env python3
-"""fund_fetcher.py v6.9
+"""fund_fetcher.py v6.10
 v6.4 修正:
 - fetch_performance_wb01(): 雙策略解析，多 URL fallback
 - fetch_risk_metrics(): 更強健的欄位偵測，多 URL fallback
@@ -1336,11 +1336,14 @@ def _src_tcb_nav(code: str) -> pd.Series:
         f"https://tcbbankfund.moneydj.com/w/wf/wf01.djhtm?a={code}",
         f"https://tcbbankfund.moneydj.com/w/wb/wb02.djhtm?a={code}",
         f"https://chubb.moneydj.com/w/wf/wf01.djhtm?a={code}",
-        # www.moneydj.com 主站：境外用 yp004001（簡單 ?a= 可查歷史淨值）
-        # 境內基金無此頁，改靠下方 yp004002 帶日期參數段
     ]
     if not _dom:
-        _simple_urls.append(f"https://www.moneydj.com/funddj/yf/yp004001.djhtm?a={code}")
+        # v6.10: 境外基金先試子網域的 yp004001（Streamlit Cloud 封鎖 www 但子網域可存取）
+        _simple_urls.extend([
+            f"https://tcbbankfund.moneydj.com/funddj/yf/yp004001.djhtm?a={code}",
+            f"https://chubb.moneydj.com/funddj/yf/yp004001.djhtm?a={code}",
+            f"https://www.moneydj.com/funddj/yf/yp004001.djhtm?a={code}",  # fallback（本地/Colab 可用）
+        ])
     for _url in _simple_urls:
         try:
             hdr = {**HDR, "Referer": "https://www.moneydj.com/"}
