@@ -18,7 +18,7 @@ import pandas as pd, numpy as np
 from macro_engine import fetch_all_indicators, calc_macro_phase, ENGINE_VERSION
 
 # ── 版本戳記：在這裡改版本號 = 確認 app.py 已部署至 Streamlit Cloud
-APP_VERSION = "v17.3_CnyesAPI"
+APP_VERSION = "v17.4_InsSubdomain"
 from fund_fetcher  import (fetch_fund_by_key, search_moneydj_by_name,
                             fetch_fund_structure, fetch_fund_from_moneydj_url,
                             tdcc_search_fund,
@@ -216,8 +216,28 @@ with st.sidebar:
     _sb_upd = st.session_state.get("macro_last_update")
     _sb_upd_str = _sb_upd.strftime("%m/%d %H:%M") if _sb_upd else "未載入"
     st.caption(f"📡 總經更新：{_sb_upd_str} ‧ {_now_tw().strftime('%m/%d %H:%M')} TW")
-    # ── 版本戳記（看到版本號 = 確認 GitHub 已部署至 Streamlit Cloud）
-    st.info(f"系統版本：{APP_VERSION}\nEngine：{ENGINE_VERSION}")
+    # ── 版本戳記（版本號更新 = Streamlit Cloud 已部署最新程式）
+    _fetcher_ver = "v6.8"
+    st.markdown(
+        f"<div style='background:#0d1117;border:1px solid #30363d;border-radius:8px;"
+        f"padding:8px 10px;font-size:11px'>"
+        f"<div style='color:#58a6ff;font-weight:700;margin-bottom:3px'>📦 當前部署版本</div>"
+        f"<div style='color:#e0e0e0'>App：<b>{APP_VERSION}</b></div>"
+        f"<div style='color:#e0e0e0'>Engine：<b>{ENGINE_VERSION}</b></div>"
+        f"<div style='color:#e0e0e0'>Fetcher：<b>{_fetcher_ver}</b></div>"
+        f"<div style='color:#888;font-size:10px;margin-top:4px'>"
+        f"版本號更新 = GitHub 部署完成 ✅</div>"
+        f"</div>",
+        unsafe_allow_html=True)
+
+    # ── GitHub 快速連結 ─────────────────────────────────
+    _gh_col1, _gh_col2 = st.columns(2)
+    with _gh_col1:
+        st.link_button("📋 PRs", "https://github.com/Chenlin1984/my-fund-dashboard/pulls",
+                       use_container_width=True, help="查看 GitHub Pull Requests 列表")
+    with _gh_col2:
+        st.link_button("📝 Commits", "https://github.com/Chenlin1984/my-fund-dashboard/commits/main",
+                       use_container_width=True, help="查看最新 commit 紀錄")
     st.divider()
 
     # ── API 狀態 ────────────────────────────────────────
