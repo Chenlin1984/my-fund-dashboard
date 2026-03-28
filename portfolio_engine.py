@@ -378,11 +378,10 @@ def calc_kelly(series: "pd.Series",
                     "win_rate": None, "odds": None, "note": "無法計算"}
         p  = len(wins) / len(r)
         q  = 1 - p
-        b  = wins.mean() / abs(losses.mean())        # 賠率
-        f_star = (b * p - q) / b                     # 全凱利
-        f_star = float(np.clip(f_star, 0, 1))        # Fix: 夾在 [0,1]
+        b      = wins.mean() / abs(losses.mean())     # 賠率
+        _f_raw = (b * p - q) / b                     # 全凱利（未夾取，負值代表期望值為負）
+        f_star = float(np.clip(_f_raw, 0, 1))        # 夾在 [0,1]
         half_k = round(f_star / 2, 4)
-        _f_raw = (b * p - q) / b  # 未夾取的原始值
         return {
             "kelly":          round(f_star, 4),
             "kelly_raw":      round(_f_raw, 4),   # 負值代表數學期望為負

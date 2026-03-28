@@ -15,7 +15,7 @@ import requests, yfinance as yf, pandas as pd, numpy as np, streamlit as st, mat
 FRED_BASE = "https://api.stlouisfed.org/fred/series/observations"
 
 # ── 版本戳記：修改此值 = 確認 GitHub 已更新並部署至 Streamlit Cloud
-ENGINE_VERSION = "v17.1_SlopeEngine"
+ENGINE_VERSION = "v17.2_BugFix"
 
 # ── Self-healing snapshot: 記錄最後一次成功抓取的指標資料
 _INDICATOR_SNAPSHOT: dict = {}
@@ -315,7 +315,7 @@ def fetch_all_indicators(fred_api_key, cache_date: str = ""):
             ratio = ratio.reindex(s_spy.index, method="ffill").dropna()
             v = round(float(ratio.iloc[-1]),4)
             m1 = round(float(ratio.iloc[-22]),4)
-            chg = round((v-m1)/m1*100,2)
+            chg = round((v-m1)/m1*100,2) if m1 != 0 else 0.0
             s_w = ratio.resample("W").last().tail(52)
             R["ADL"] = dict(
                 name="市場廣度 RSP/SPY", value=round(v,4), prev=round(chg,2),
@@ -335,7 +335,7 @@ def fetch_all_indicators(fred_api_key, cache_date: str = ""):
     if len(s_dxy) >= 22:
         v = round(float(s_dxy.iloc[-1]),2)
         m1 = round(float(s_dxy.iloc[-22]),2)
-        chg_m = round((v-m1)/m1*100, 2)
+        chg_m = round((v-m1)/m1*100, 2) if m1 != 0 else 0.0
         s_w = s_dxy.resample("W").last().tail(52)
         R["DXY"] = dict(
             name="美元指數 DXY", value=v, prev=round(chg_m,2),
@@ -818,7 +818,6 @@ def calc_macro_phase(indicators: dict) -> dict:
 
     # ── 拐點轉向判斷 ─────────────────────────────────────
     PHASE_ORDER = ["衰退", "復甦", "擴張", "高峰"]
-    PHASE_COLORS = {"衰退":"#ff9800","復甦":"#64b5f6","擴張":"#00c853","高峰":"#f44336"}
     infl_score = mk_signals.get("infl_score", 0)
     ph_idx = PHASE_ORDER.index(phase)
 
@@ -848,15 +847,14 @@ def calc_macro_phase(indicators: dict) -> dict:
         trend_label = "持穩整理"
         trend_color = "#888888"
 
-        # ── 各景氣位階配置 Map（供拐點轉換顯示）────────────────
+    # ── 各景氣位階配置 Map（供拐點轉換顯示）────────────────
     ALLOC_MAP = {
         "復甦": dict(股票=40, 債券=40, 現金=20),
         "擴張": dict(股票=60, 債券=30, 現金=10),
         "高峰": dict(股票=35, 債券=45, 現金=20),
         "衰退": dict(股票=20, 債券=50, 現金=30),
     }
-    PHASE_ORDER = ["衰退", "復甦", "擴張", "高峰"]
-    cur_idx  = PHASE_ORDER.index(phase) if phase in PHASE_ORDER else 2
+    cur_idx  = ph_idx  # 複用已計算的 ph_idx，消除重複定義
     next_p   = PHASE_ORDER[(cur_idx + 1) % 4]
     prev_p   = PHASE_ORDER[(cur_idx - 1) % 4]
     next_alloc = ALLOC_MAP[next_p]
