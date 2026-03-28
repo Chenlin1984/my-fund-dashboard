@@ -18,7 +18,7 @@ import pandas as pd, numpy as np
 from macro_engine import fetch_all_indicators, calc_macro_phase, ENGINE_VERSION
 
 # ── 版本戳記：在這裡改版本號 = 確認 app.py 已部署至 Streamlit Cloud
-APP_VERSION = "v17.4_InsSubdomain"
+APP_VERSION = "v17.5_CodeNorm"
 from fund_fetcher  import (fetch_fund_by_key, search_moneydj_by_name,
                             fetch_fund_structure, fetch_fund_from_moneydj_url,
                             tdcc_search_fund,
@@ -217,7 +217,7 @@ with st.sidebar:
     _sb_upd_str = _sb_upd.strftime("%m/%d %H:%M") if _sb_upd else "未載入"
     st.caption(f"📡 總經更新：{_sb_upd_str} ‧ {_now_tw().strftime('%m/%d %H:%M')} TW")
     # ── 版本戳記（版本號更新 = Streamlit Cloud 已部署最新程式）
-    _fetcher_ver = "v6.8"
+    _fetcher_ver = "v6.9"
     st.markdown(
         f"<div style='background:#0d1117;border:1px solid #30363d;border-radius:8px;"
         f"padding:8px 10px;font-size:11px'>"
