@@ -7,7 +7,7 @@
 #            請回報給開發者更新解析邏輯。
 # =================================================
 #!/usr/bin/env python3
-"""fund_fetcher.py v6.14
+"""fund_fetcher.py v6.15
 v6.4 修正:
 - fetch_performance_wb01(): 雙策略解析，多 URL fallback
 - fetch_risk_metrics(): 更強健的欄位偵測，多 URL fallback
@@ -1059,8 +1059,160 @@ def _src_cnyes_div(code: str) -> list:
 
 
 # ══════════════════════════════════════════════════════════════════════
-# v13.4 境內基金 page-aware 路由工具
+# v6.15 Morningstar 國際資料源（FLFM1/JFZN3 等跨國基金適用）
+# 原理：MoneyDJ 保險子網域封鎖 Streamlit Cloud IP
+#       → 改從 Morningstar 全球 API 抓取，無 IP 限制
+# 介面仍顯示中文（欄位名稱/標籤不變）
 # ══════════════════════════════════════════════════════════════════════
+
+# Morningstar 搜尋 secId 快取（避免重複查）
+_ms_secid_cache: dict = {}
+
+def _morningstar_search_secid(query: str, currency: str = "TWD") -> str:
+    """
+    透過 Morningstar 搜尋 API 取得 secId。
+    query: 基金名稱（英文較準）或 ISIN。
+    回傳 Morningstar secId 字串，找不到回傳 ""。
+    """
+    if query in _ms_secid_cache:
+        return _ms_secid_cache[query]
+    try:
+        import urllib.request as _ur, json as _j, urllib.parse as _up
+        _q = _up.quote(query[:60])
+        # Morningstar 全球搜尋（無地區限制，不需登入）
+        url = (
+            f"https://lt.morningstar.com/j2uwuwirjh/util/SecuritySearch.ashx"
+            f"?q={_q}&rows=5&Sound=0&F=0&MR=True&CF=0&EF=0"
+            f"&category=&langId=zh-tw&SiteLanguage=zh-tw&ifIncludeAds=False&ProductType=FUND"
+        )
+        hdrs = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Accept": "application/json, text/javascript, */*",
+            "Referer": "https://www.morningstar.com/",
+            "Origin": "https://www.morningstar.com",
+        }
+        req = _ur.Request(url, headers=hdrs)
+        with _ur.urlopen(req, timeout=10) as resp:
+            data = _j.loads(resp.read())
+        results = data if isinstance(data, list) else data.get("r", [])
+        if results:
+            sec_id = results[0].get("i", "")
+            fund_name_ms = results[0].get("n", "")
+            print(f"[morningstar_search] '{query}' → secId={sec_id} ({fund_name_ms[:30]})")
+            _ms_secid_cache[query] = sec_id
+            return sec_id
+    except Exception as _e:
+        print(f"[morningstar_search] '{query}': {_e}")
+    _ms_secid_cache[query] = ""
+    return ""
+
+
+def _src_morningstar_nav(code: str, fund_name: str = "") -> "pd.Series":
+    """
+    v6.15: 從 Morningstar 全球 API 取歷史淨值。
+    適用對象：FLFM1（富蘭克林）、JFZN3（JP Morgan）等有國際登記的基金。
+    流程：基金名稱 → Morningstar search → secId → timeseries API
+    注意：純台灣保險包裝（TLZF9/CTZP0）可能查無結果。
+    """
+    import datetime as _dt2, json as _j2, urllib.request as _ur2
+    rows = {}
+    _code = code.upper().strip()
+
+    # 決定搜尋關鍵字：優先使用 fund_name（TDCC 取得的正式名稱），
+    # 若無則用代碼本身
+    _query = fund_name.strip() if fund_name.strip() else _code
+    if not _query:
+        return pd.Series(dtype=float)
+
+    sec_id = _morningstar_search_secid(_query)
+    if not sec_id:
+        # 若基金名稱查不到，嘗試用代碼
+        if _query != _code:
+            sec_id = _morningstar_search_secid(_code)
+    if not sec_id:
+        print(f"[src_morningstar] {_code}: 無法取得 secId")
+        return pd.Series(dtype=float)
+
+    # Morningstar timeseries price API（公開端點，無需登入）
+    end_d   = _dt2.date.today()
+    start_d = end_d - _dt2.timedelta(days=400)
+    url = (
+        f"https://tools.morningstar.co.uk/api/rest.svc/timeseries_price/{sec_id}"
+        f"?currencyId=TWD&idtype=Morningstar&frequency=daily"
+        f"&startDate={start_d.isoformat()}&endDate={end_d.isoformat()}"
+        f"&outputType=COMPACTJSON"
+    )
+    hdrs2 = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Accept": "application/json",
+        "Referer": "https://tools.morningstar.co.uk/",
+    }
+    try:
+        req2 = _ur2.Request(url, headers=hdrs2)
+        with _ur2.urlopen(req2, timeout=15) as resp2:
+            data2 = _j2.loads(resp2.read())
+        # COMPACTJSON 格式：{"TimeSeries": {"Security": [{"HistoryDetail": [...]}]}}
+        securities = (data2.get("TimeSeries") or {}).get("Security") or []
+        for sec in securities:
+            for pt in (sec.get("HistoryDetail") or []):
+                d_str = str(pt.get("EndDate", ""))[:10]
+                v     = safe_float(pt.get("Value"))
+                if d_str and v:
+                    try:
+                        rows[pd.Timestamp(d_str)] = v
+                    except Exception:
+                        pass
+        if rows:
+            s = pd.Series(rows).sort_index()
+            print(f"[src_morningstar] ✅ {_code} (secId={sec_id}) {len(s)} 筆")
+            return s
+    except Exception as _e2:
+        print(f"[src_morningstar] {_code} timeseries: {_e2}")
+
+    return pd.Series(dtype=float)
+
+
+def _src_morningstar_meta(code: str, fund_name: str = "") -> dict:
+    """
+    v6.15: 從 Morningstar 取基金中文名稱與最新淨值。
+    """
+    meta = {}
+    _code = code.upper().strip()
+    _query = fund_name.strip() if fund_name.strip() else _code
+    if not _query:
+        return meta
+    try:
+        import urllib.request as _ur3, json as _j3, urllib.parse as _up3
+        _q3 = _up3.quote(_query[:60])
+        url3 = (
+            f"https://lt.morningstar.com/j2uwuwirjh/util/SecuritySearch.ashx"
+            f"?q={_q3}&rows=3&Sound=0&F=0&MR=True&CF=0&EF=0"
+            f"&category=&langId=zh-tw&SiteLanguage=zh-tw&ifIncludeAds=False&ProductType=FUND"
+        )
+        hdrs3 = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Accept": "application/json",
+            "Referer": "https://www.morningstar.com/",
+        }
+        req3 = _ur3.Request(url3, headers=hdrs3)
+        with _ur3.urlopen(req3, timeout=10) as resp3:
+            data3 = _j3.loads(resp3.read())
+        results3 = data3 if isinstance(data3, list) else data3.get("r", [])
+        if results3:
+            r0 = results3[0]
+            ms_name = r0.get("n", "")
+            if ms_name:
+                # Morningstar 回的是英文名稱，保留作參考（UI 中文 label 不受影響）
+                meta["fund_name_intl"] = ms_name
+                # 若 TDCC 沒找到中文名稱，用英文名稱暫代
+                if not meta.get("fund_name"):
+                    meta["fund_name"] = ms_name
+                print(f"[src_morningstar_meta] ✅ {_code}: {ms_name[:40]}")
+    except Exception as _e3:
+        print(f"[src_morningstar_meta] {_code}: {_e3}")
+    return meta
+
+
 
 # ── 預設代碼映射表（內建，不需外部檔案）────────────────────────────
 _DEFAULT_MAPPING = {
@@ -1916,6 +2068,24 @@ def _fetch_fund_single(code: str, force_refresh: bool = False,
             nav_source = "moneydj_nav30"
             print(f"[orchestrator] 📅 {_code} 使用近30日淨值（{len(nav_s)}筆）")
 
+    # 2g. v6.15: Morningstar 國際資料源（保險代碼 MoneyDJ 全封鎖時的跨國備援）
+    # 適用：FLFM1（富蘭克林）、JFZN3（JP Morgan）等在 Morningstar 有登記的基金
+    # 注意：純台灣保險包裝（TLZF9/CTZP0）Morningstar 可能無此資料
+    if len(nav_s) < 10 and _is_insurance_code:
+        # 先嘗試用 TDCC 已取得的基金名稱搜尋（名稱比代碼準）
+        _ms_name = result.get("fund_name") or ""
+        _ms_s = _src_morningstar_nav(_code, fund_name=_ms_name)
+        if len(_ms_s) >= 10:
+            nav_s = _ms_s
+            nav_source = "morningstar"
+            result.setdefault("source_trace", []).append(
+                {"source": "morningstar", "success": True, "nav_count": len(_ms_s)})
+            print(f"[orchestrator] 🌐 {_code} Morningstar 命中 {len(_ms_s)} 筆")
+        else:
+            result.setdefault("source_trace", []).append(
+                {"source": "morningstar", "success": False,
+                 "error": "查無資料（可能為純保險包裝）"})
+
     if len(nav_s) >= 10:
         result["series"]      = nav_s
         result["data_source"] = nav_source
@@ -2018,15 +2188,16 @@ def _fetch_fund_single(code: str, force_refresh: bool = False,
                 # 有部分資料（名稱/淨值）→ 黃色 warning，清除紅色 error
                 result["error"] = None
                 result["warning"] = (
-                    f"⚠️ 保險平台專屬代碼（{_code}）在 Streamlit Cloud 上無法下載歷史淨值，"
-                    "MoneyDJ 保險子網域封鎖雲端 IP。"
-                    "上方已顯示 TDCC 最新淨值。如需完整走勢分析，請使用「手動淨值輸入」功能。"
+                    f"⚠️ 保險平台專屬代碼（{_code}）在 Streamlit Cloud 上無法下載歷史淨值。"
+                    "MoneyDJ 保險子網域封鎖雲端 IP，Morningstar 亦無此代碼的歷史序列。"
+                    " 上方已顯示 TDCC 最新淨值。如需走勢分析，請使用「手動淨值輸入」功能。"
                 )
             else:
                 # 完全無資料 → 紅色 error 但說明原因
                 result["error"] = (
                     f"❌ 保險平台專屬代碼（{_code}）：MoneyDJ 保險子網域封鎖雲端 IP，"
-                    "TDCC 亦查無此代碼。請確認代碼是否正確，或改用「手動淨值輸入」功能。"
+                    "TDCC 及 Morningstar 亦查無此代碼。"
+                    "請確認代碼是否正確，或改用「手動淨值輸入」功能。"
                 )
 
     return result
