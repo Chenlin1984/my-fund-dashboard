@@ -7,7 +7,7 @@
 #            請回報給開發者更新解析邏輯。
 # =================================================
 #!/usr/bin/env python3
-"""fund_fetcher.py v6.5
+"""fund_fetcher.py v6.6
 v6.4 修正:
 - fetch_performance_wb01(): 雙策略解析，多 URL fallback
 - fetch_risk_metrics(): 更強健的欄位偵測，多 URL fallback
@@ -1229,13 +1229,17 @@ def _src_tcb_nav(code: str) -> pd.Series:
     today = _dt.date.today()
     start = today - _dt.timedelta(days=400)
 
-    # ── 優先嘗試原始 wf01/wb02 路徑（原始版本使用，簡單 ?a= 即可）
+    # ── 優先嘗試原始 wf01/wb02 路徑（境內/境外通用，子網域限制最少）
+    _dom = _is_domestic_code(code)
     _simple_urls = [
         f"https://tcbbankfund.moneydj.com/w/wf/wf01.djhtm?a={code}",
         f"https://tcbbankfund.moneydj.com/w/wb/wb02.djhtm?a={code}",
         f"https://chubb.moneydj.com/w/wf/wf01.djhtm?a={code}",
-        f"https://www.moneydj.com/funddj/yf/yp004001.djhtm?a={code}",
+        # www.moneydj.com 主站：境外用 yp004001（簡單 ?a= 可查歷史淨值）
+        # 境內基金無此頁，改靠下方 yp004002 帶日期參數段
     ]
+    if not _dom:
+        _simple_urls.append(f"https://www.moneydj.com/funddj/yf/yp004001.djhtm?a={code}")
     for _url in _simple_urls:
         try:
             hdr = {**HDR, "Referer": "https://www.moneydj.com/"}
@@ -2405,9 +2409,10 @@ def _parse_nav_html(html: str) -> pd.Series:
 def fetch_nav(full_key: str, portal: str = "") -> pd.Series:
     """
     取基金淨值歷史。
-    portal 子網域 → tcbbankfund（公開可存取）→ moneydj 通用
+    portal 子網域 → tcbbankfund（境內/境外通用）→ moneydj 主站（境外用 yp004001）
     """
     mj_short = full_key.split("-")[-1] if "-" in full_key else full_key
+    _is_dom = _is_domestic_code(full_key)
     urls = []
     if portal in PORTAL_CFG:
         base = PORTAL_CFG[portal]["base_url"]
@@ -2415,9 +2420,14 @@ def fetch_nav(full_key: str, portal: str = "") -> pd.Series:
     urls += [
         f"{TCB_BASE}/w/wb/wb02.djhtm?a={full_key}",
         f"{TCB_BASE}/w/wf/wf01.djhtm?a={full_key}",
-        f"https://www.moneydj.com/funddj/yf/yp004001.djhtm?a={full_key}",
-        f"https://www.moneydj.com/funddj/yf/yp004001.djhtm?a={mj_short}",
     ]
+    # yp004001 = 境外基金淨值歷史頁（無日期 param 的簡單路徑）
+    # 境內基金無此頁，靠 wf01/wb02 子網域 或 _src_tcb_nav 的 yp004002 段
+    if not _is_dom:
+        urls += [
+            f"https://www.moneydj.com/funddj/yf/yp004001.djhtm?a={full_key}",
+            f"https://www.moneydj.com/funddj/yf/yp004001.djhtm?a={mj_short}",
+        ]
     for url in urls:
         try:
             r = requests.get(url, headers=HDR, timeout=25)
@@ -2438,10 +2448,18 @@ def fetch_div(full_key: str, portal: str = "") -> list:
         base = PORTAL_CFG[portal]["base_url"]
         urls.append(base + PORTAL_CFG[portal]["div_path"].format(fk=full_key))
     mj = full_key.split("-")[-1] if "-" in full_key else full_key
-    urls += [
-        f"https://www.moneydj.com/funddj/yf/yp004003.djhtm?a={full_key}",
-        f"https://www.moneydj.com/funddj/yf/yp004003.djhtm?a={mj}",
-    ]
+    _is_dom = _is_domestic_code(full_key)
+    # yp004003 = 境外基金配息頁；境內基金使用 funddividend（子網域通用）
+    if not _is_dom:
+        urls += [
+            f"https://www.moneydj.com/funddj/yf/yp004003.djhtm?a={full_key}",
+            f"https://www.moneydj.com/funddj/yf/yp004003.djhtm?a={mj}",
+        ]
+    else:
+        urls += [
+            f"https://tcbbankfund.moneydj.com/funddj/yp/funddividend.djhtm?a={full_key}",
+            f"https://www.moneydj.com/funddj/yp/funddividend.djhtm?a={full_key}",
+        ]
     for url in urls:
         try:
             r = requests.get(url, headers=HDR, timeout=20)
