@@ -7,7 +7,7 @@
 #            請回報給開發者更新解析邏輯。
 # =================================================
 #!/usr/bin/env python3
-"""fund_fetcher.py v6.11
+"""fund_fetcher.py v6.12
 v6.4 修正:
 - fetch_performance_wb01(): 雙策略解析，多 URL fallback
 - fetch_risk_metrics(): 更強健的欄位偵測，多 URL fallback
@@ -470,8 +470,11 @@ import os as _os
 import datetime as _datetime
 import json as _json_mod
 
-# ── 本地快取路徑（Colab 執行期間保留）──────────────────────────────
-_CACHE_DIR = "/content/fund_cache"
+# ── 本地快取路徑（環境自適應：Colab → /content, Streamlit Cloud → /tmp）──
+_CACHE_DIR = "/content/fund_cache" if _os.path.isdir("/content") else "/tmp/fund_cache"
+
+# ── 記憶體快照：網路與檔案快取均失效時的最後一道防線（同 macro_engine._INDICATOR_SNAPSHOT）
+_FUND_SNAPSHOT: dict = {}  # key=code.upper(), value=完整 result dict（不含 series）
 
 def _cache_path(code: str, dtype: str) -> str:
     _os.makedirs(_CACHE_DIR, exist_ok=True)
@@ -2495,14 +2498,33 @@ def fetch_fund_from_moneydj_url(url: str) -> dict:
                 "💡 建議：直接貼 MoneyDJ 完整網址以取得最佳結果"
             )
         else:
-            result["error"] = (
-                "❌ 無法取得基金資料（所有來源均失敗）\n"
-                "💡 解決方案：\n"
-                "① 直接貼 MoneyDJ 完整網址（比代碼更準確）：\n"
-                "   境內基金：www.moneydj.com/funddj/ya/yp010000.djhtm?a={code}\n"
-                "   境外基金：www.moneydj.com/funddj/ya/yp010001.djhtm?a={code}\n"
-                "② 於下方手動填入淨值、配息數據"
-            ).format(code=result.get("full_key","???"))
+            # ── 記憶體快照 fallback（網路斷線時顯示上次成功資料）──
+            _snap_key = (code or result.get("full_key", "")).upper()
+            if _snap_key and _snap_key in _FUND_SNAPSHOT:
+                _snap = _FUND_SNAPSHOT[_snap_key]
+                result.update({k: v for k, v in _snap.items() if v})
+                result["error"]   = None
+                result["warning"] = "⚠️ 網路暫時無法連線，顯示上次快照資料（數值可能稍舊）"
+                print(f"[snapshot] ✅ {_snap_key} 使用記憶體快照")
+            else:
+                result["error"] = (
+                    "❌ 無法取得基金資料（所有來源均失敗）\n"
+                    "💡 解決方案：\n"
+                    "① 直接貼 MoneyDJ 完整網址（比代碼更準確）：\n"
+                    "   境內基金：www.moneydj.com/funddj/ya/yp010000.djhtm?a={code}\n"
+                    "   境外基金：www.moneydj.com/funddj/ya/yp010001.djhtm?a={code}\n"
+                    "② 於下方手動填入淨值、配息數據"
+                ).format(code=result.get("full_key","???"))
+
+    # ── 成功取得資料時更新記憶體快照 ──────────────────────────────────
+    _snap_key = (code or result.get("full_key", "")).upper()
+    if _snap_key and result.get("series") is not None and result.get("error") is None:
+        # 快照不含 series（節省記憶體），保留 metrics/perf/fund_name 等輕量欄位
+        _FUND_SNAPSHOT[_snap_key] = {
+            k: v for k, v in result.items()
+            if k not in ("series",) and v not in (None, [], {})
+        }
+        print(f"[snapshot] 💾 {_snap_key} 快照已更新")
 
     return result
 
