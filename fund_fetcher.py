@@ -7,7 +7,7 @@
 #            請回報給開發者更新解析邏輯。
 # =================================================
 #!/usr/bin/env python3
-"""fund_fetcher.py v6.8
+"""fund_fetcher.py v6.9
 v6.4 修正:
 - fetch_performance_wb01(): 雙策略解析，多 URL fallback
 - fetch_risk_metrics(): 更強健的欄位偵測，多 URL fallback
@@ -1018,10 +1018,16 @@ def _src_cnyes_div(code: str) -> list:
 _DEFAULT_MAPPING = {
     "ACTI171": {"public_code": "ACTI71",  "page_type": "yp010000", "note": "平台碼→公開碼"},
     "ACTI71":  {"public_code": "ACTI71",  "page_type": "yp010000", "note": "境內基金"},
+    "ACTI7":   {"public_code": "ACTI71",  "page_type": "yp010000", "note": "ACTI7→ACTI71"},  # v6.9
     "ACTI98":  {"public_code": "ACTI98",  "page_type": "yp010000", "note": "境內基金"},
     "ACTI94":  {"public_code": "ACTI94",  "page_type": "yp010000", "note": "境內基金"},
     "ACCP138": {"public_code": "ACCP138", "page_type": "yp010000", "note": "境內基金"},
     "ACDD19":  {"public_code": "ACDD19",  "page_type": "yp010000", "note": "境內基金"},
+    "TLZF9":   {"public_code": "TLZF9",   "page_type": "yp010001", "note": "境外基金(台灣人壽)"},  # v6.9
+    "FLFM1":   {"public_code": "FLFM1",   "page_type": "yp010001", "note": "境外基金"},
+    "CTZP0":   {"public_code": "CTZP0",   "page_type": "yp010001", "note": "境外基金"},
+    "ANZ89":   {"public_code": "ANZ89",   "page_type": "yp010001", "note": "境外基金"},
+    "JFZN3":   {"public_code": "JFZN3",   "page_type": "yp010001", "note": "境外基金"},
 }
 
 def load_fund_code_mapping(path: str = "fund_code_mapping.csv") -> dict:
