@@ -7,7 +7,7 @@
 #            請回報給開發者更新解析邏輯。
 # =================================================
 #!/usr/bin/env python3
-"""fund_fetcher.py v6.6
+"""fund_fetcher.py v6.7
 v6.4 修正:
 - fetch_performance_wb01(): 雙策略解析，多 URL fallback
 - fetch_risk_metrics(): 更強健的欄位偵測，多 URL fallback
@@ -216,6 +216,46 @@ def _tdcc_get(ep: str) -> list:
         return _tdcc_cache[ep]
     except Exception as e:
         return []
+
+
+def _src_tdcc_meta(code: str) -> dict:
+    """
+    TDCC OpenAPI 境外基金 metadata（3-2 + 3-4）。
+    提供：基金名稱、計價幣別、最新淨值、淨值日期。
+    注意：僅有最新淨值，無歷史序列。
+    """
+    meta = {}
+    _c = code.upper().strip()
+    try:
+        # 3-2 基本資料（名稱、幣別）
+        basic = _tdcc_get("3-2")
+        for item in basic:
+            item_code = (item.get("基金代碼") or item.get("境外基金代碼") or "").upper()
+            if item_code == _c:
+                meta["fund_name"] = item.get("基金名稱", "")
+                meta["currency"]  = item.get("計價幣別", "USD")
+                print(f"[src_tdcc_meta] 3-2 ✅ {_c}: {meta['fund_name'][:25]}")
+                break
+    except Exception as _e:
+        print(f"[src_tdcc_meta] 3-2 {_c}: {_e}")
+    try:
+        # 3-4 最新淨值
+        navs = _tdcc_get("3-4")
+        for item in navs:
+            item_code = (item.get("基金代碼") or "").upper()
+            if item_code == _c:
+                nav = safe_float(item.get("基金淨值"))
+                date_str = str(item.get("日期", ""))[:10]
+                if nav:
+                    meta["nav_latest"] = nav
+                    meta["nav_date"]   = date_str
+                if not meta.get("fund_name"):
+                    meta["fund_name"] = item.get("基金名稱", "")
+                print(f"[src_tdcc_meta] 3-4 ✅ {_c}: nav={nav} @ {date_str}")
+                break
+    except Exception as _e:
+        print(f"[src_tdcc_meta] 3-4 {_c}: {_e}")
+    return meta
 
 
 def tdcc_search_fund(keyword: str) -> list:
@@ -796,67 +836,107 @@ def calc_health_from_manual(
 
 
 # ── 來源2：鉅亨網 API（無 IP 限制，伺服器可用）────────────────────────
+def _cnyes_parse_navs(navs: list) -> dict:
+    """解析 cnyes NAV 列表，回傳 {timestamp: float}"""
+    rows = {}
+    for item in navs:
+        try:
+            if isinstance(item, (list, tuple)) and len(item) >= 2:
+                ts = pd.Timestamp(int(item[0]), unit="ms")
+                v  = safe_float(item[1])
+                if v and v > 0:
+                    rows[ts.normalize()] = v
+            elif isinstance(item, dict):
+                d_val = (item.get("date") or item.get("Date")
+                         or item.get("nav_date") or "")
+                n_val = safe_float(item.get("nav") or item.get("NAV")
+                                   or item.get("value"))
+                if d_val and n_val:
+                    rows[pd.Timestamp(str(d_val)[:10])] = n_val
+        except Exception:
+            pass
+    return rows
+
+
+def _cnyes_resolve_code(moneydj_code: str) -> list:
+    """
+    透過 cnyes search API 找出對應的 cnyes 基金代碼列表。
+    cnyes 代碼可能與 MoneyDJ 代碼不同（例如 TLZF9 在 cnyes 可能有別名）。
+    回傳所有候選 cnyes 代碼，首位最優先。
+    """
+    _code = moneydj_code.upper().strip()
+    candidates = [_code, _code.lower()]   # 先試原始代碼
+    try:
+        # cnyes fund search API
+        search_url = (
+            f"https://fund.api.cnyes.com/fund/api/v2/funds/search"
+            f"?key={_code}&limit=10"
+        )
+        r = requests.get(search_url, headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+            "Accept": "application/json",
+            "Referer": "https://fund.cnyes.com/",
+        }, timeout=10)
+        if r.status_code == 200:
+            data = r.json()
+            items = (data.get("data", {}).get("list")
+                     or data.get("data")
+                     or data.get("items")
+                     or [])
+            if isinstance(items, list):
+                for item in items:
+                    c = (item.get("fundCode") or item.get("code")
+                         or item.get("id") or "")
+                    if c and c not in candidates:
+                        candidates.append(c)
+                print(f"[cnyes_search] {_code} → 候選: {candidates[:5]}")
+    except Exception as _e:
+        print(f"[cnyes_search] {_code}: {_e}")
+    return candidates
+
+
 def fetch_nav_cnyes(code: str) -> pd.Series:
     """
-    鉅亨網 fund.api.cnyes.com 歷史淨值。
-    使用 REST JSON API，不依賴 MoneyDJ，Streamlit Cloud 可存取。
+    鉅亨網歷史淨值（v6.7）。
+    新增：search API 先找正確的 cnyes 代碼，再用代碼取歷史淨值。
+    不依賴 MoneyDJ，Streamlit Cloud 可存取。
     """
     import datetime as _dt2
     import time as _time2
-    rows = {}
-    end_d   = _dt2.date.today()
-    start_d = end_d - _dt2.timedelta(days=400)
+    end_d    = _dt2.date.today()
+    start_d  = end_d - _dt2.timedelta(days=400)
     end_ms   = int(_time2.mktime(end_d.timetuple())) * 1000
     start_ms = int(_time2.mktime(start_d.timetuple())) * 1000
-    _code = code.upper().strip()
-    # cnyes 支援的 URL 格式（按優先順序嘗試）
-    urls = [
-        f"https://fund.api.cnyes.com/fund/api/v2/funds/{_code}/nav?start={start_ms}&end={end_ms}",
-        f"https://fund.api.cnyes.com/fund/api/v2/funds/{_code.lower()}/nav?start={start_ms}&end={end_ms}",
-    ]
-    for _url in urls:
+
+    # Step 1: 解析候選代碼（含 search fallback）
+    candidates = _cnyes_resolve_code(code)
+
+    _hdrs = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+        "Accept": "application/json",
+        "Referer": "https://fund.cnyes.com/",
+    }
+    for _cand in candidates:
+        _url = (f"https://fund.api.cnyes.com/fund/api/v2/funds/{_cand}"
+                f"/nav?start={start_ms}&end={end_ms}")
         try:
-            r = requests.get(_url, headers={
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-                "Accept": "application/json",
-                "Referer": "https://fund.cnyes.com/",
-            }, timeout=15)
+            r = requests.get(_url, headers=_hdrs, timeout=15)
             if r.status_code != 200:
                 continue
             data = r.json()
-            # 格式 1: {"data": {"nav": [[timestamp_ms, value], ...]}}
             navs = (data.get("data", {}).get("nav")
                     or data.get("data", {}).get("navs")
                     or data.get("items")
                     or [])
             if not navs and isinstance(data, list):
                 navs = data
-            for item in navs:
-                if isinstance(item, (list, tuple)) and len(item) >= 2:
-                    ts_ms, val = item[0], item[1]
-                    try:
-                        ts = pd.Timestamp(int(ts_ms), unit="ms")
-                        v  = safe_float(val)
-                        if v and v > 0:
-                            rows[ts.normalize()] = v
-                    except Exception:
-                        pass
-                elif isinstance(item, dict):
-                    d_val = (item.get("date") or item.get("Date")
-                             or item.get("nav_date") or "")
-                    n_val = safe_float(item.get("nav") or item.get("NAV")
-                                       or item.get("value"))
-                    if d_val and n_val:
-                        try:
-                            rows[pd.Timestamp(str(d_val)[:10])] = n_val
-                        except Exception:
-                            pass
+            rows = _cnyes_parse_navs(navs)
             if rows:
-                break
+                print(f"[cnyes_nav] ✅ {code}→{_cand} {len(rows)} 筆")
+                return pd.Series(rows).sort_index()
         except Exception as _e:
-            print(f"[cnyes_nav] {_code} {_url[:60]}: {_e}")
-    if rows:
-        return pd.Series(rows).sort_index()
+            print(f"[cnyes_nav] {_cand}: {_e}")
+
     return pd.Series(dtype=float)
 
 
@@ -1724,6 +1804,13 @@ def _fetch_fund_single(code: str, force_refresh: bool = False,
         meta = merge_non_empty(meta, _src_sitca_meta(_code))
         if meta.get("fund_name"):
             result["source_trace"].append({"source": "sitca_meta", "success": True})
+    # 最終備援：TDCC OpenAPI（境外基金官方登記，MoneyDJ 被封鎖時仍可存取）
+    if not meta.get("fund_name") and not _is_domestic_code(_code):
+        _tdcc_m = _src_tdcc_meta(_code)
+        if _tdcc_m.get("fund_name") or _tdcc_m.get("nav_latest"):
+            meta = merge_non_empty(meta, _tdcc_m)
+            result["source_trace"].append({"source": "tdcc_meta", "success": True})
+            print(f"[orchestrator] 🏛 {_code} TDCC metadata 命中: {_tdcc_m.get('fund_name','')[:25]}")
 
     if meta:
         # v13.5: 用 merge_non_empty，不讓空值覆蓋前面成功的資料
