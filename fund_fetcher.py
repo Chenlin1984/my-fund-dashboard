@@ -7,7 +7,7 @@
 #            請回報給開發者更新解析邏輯。
 # =================================================
 #!/usr/bin/env python3
-"""fund_fetcher.py v6.13
+"""fund_fetcher.py v6.14
 v6.4 修正:
 - fetch_performance_wb01(): 雙策略解析，多 URL fallback
 - fetch_risk_metrics(): 更強健的欄位偵測，多 URL fallback
@@ -242,7 +242,8 @@ def _src_tdcc_meta(code: str) -> dict:
         # 3-4 最新淨值
         navs = _tdcc_get("3-4")
         for item in navs:
-            item_code = (item.get("基金代碼") or "").upper()
+            # Bug fix: 同時檢查 基金代碼 與 境外基金代碼，與 3-2 一致
+            item_code = (item.get("基金代碼") or item.get("境外基金代碼") or "").upper()
             if item_code == _c:
                 nav = safe_float(item.get("基金淨值"))
                 date_str = str(item.get("日期", ""))[:10]
@@ -1928,6 +1929,22 @@ def _fetch_fund_single(code: str, force_refresh: bool = False,
 
     # ── Step 3: 基本資料（Meta）─────────────────────────────────────
     meta = {}
+
+    # v6.14: 保險公司代碼（TL/FL/CT 等）優先嘗試 TDCC OpenAPI
+    # 原因：此類代碼的 MoneyDJ 保險子網域在 Streamlit Cloud 上全部被封鎖 IP，
+    #       但 TDCC 是政府 API，無 IP 限制，可取得基金名稱與最新淨值。
+    _is_insurance_code = (not _is_domestic_code(_code) and
+                          any(_code.startswith(p) for p in _INSURANCE_SUBDOMAIN_HINTS))
+    if _is_insurance_code:
+        _tdcc_early = _src_tdcc_meta(_code)
+        if _tdcc_early.get("fund_name") or _tdcc_early.get("nav_latest"):
+            meta = merge_non_empty(meta, _tdcc_early)
+            result.setdefault("source_trace", []).append(
+                {"source": "tdcc_meta_early", "success": True})
+            print(f"[orchestrator] 🏛 {_code} TDCC early 命中: "
+                  f"{_tdcc_early.get('fund_name','')[:25]} "
+                  f"nav={_tdcc_early.get('nav_latest')}")
+
     # 境內基金優先安聯投信官網
     if not meta.get("fund_name") and _is_domestic_code(_code):
         meta = _src_allianzgi_meta(_code)
@@ -1990,6 +2007,27 @@ def _fetch_fund_single(code: str, force_refresh: bool = False,
 
     # ── Step 6: 計算 MK 指標 ────────────────────────────────────────
     _finish_metrics(result)
+
+    # ── v6.14: 保險代碼專屬提示 ─────────────────────────────────────
+    # 當代碼被識別為保險公司專屬，且歷史序列為空時，給予明確引導。
+    # normalize_result_state 已處理 partial/failed 狀態，此處只覆寫訊息文字。
+    if _is_insurance_code:
+        _has_series = result.get("series") is not None and len(result.get("series", [])) >= 10
+        if not _has_series:
+            if result.get("fund_name") or result.get("nav_latest"):
+                # 有部分資料（名稱/淨值）→ 黃色 warning，清除紅色 error
+                result["error"] = None
+                result["warning"] = (
+                    f"⚠️ 保險平台專屬代碼（{_code}）在 Streamlit Cloud 上無法下載歷史淨值，"
+                    "MoneyDJ 保險子網域封鎖雲端 IP。"
+                    "上方已顯示 TDCC 最新淨值。如需完整走勢分析，請使用「手動淨值輸入」功能。"
+                )
+            else:
+                # 完全無資料 → 紅色 error 但說明原因
+                result["error"] = (
+                    f"❌ 保險平台專屬代碼（{_code}）：MoneyDJ 保險子網域封鎖雲端 IP，"
+                    "TDCC 亦查無此代碼。請確認代碼是否正確，或改用「手動淨值輸入」功能。"
+                )
 
     return result
 
