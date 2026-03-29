@@ -7,7 +7,7 @@
 #            請回報給開發者更新解析邏輯。
 # =================================================
 #!/usr/bin/env python3
-"""fund_fetcher.py v6.19
+"""fund_fetcher.py v6.20
 v6.4 修正:
 - fetch_performance_wb01(): 雙策略解析，多 URL fallback
 - fetch_risk_metrics(): 更強健的欄位偵測，多 URL fallback
@@ -1219,6 +1219,17 @@ def _src_bank_platform_nav(base_code: str) -> "pd.Series":
 # Morningstar 搜尋 secId 快取（避免重複查）
 _ms_secid_cache: dict = {}
 
+# v6.19: 已知的 Morningstar secId 硬編碼映射（跳過搜尋步驟，避免 lt.morningstar.com 封鎖）
+# secId 格式：0P 開頭的 Morningstar 全球 ID
+# 貨幣說明：TLZF9/ANZ89/JFZN3 是 USD 計價；FLFM1 需確認
+_MORNINGSTAR_SECID_MAP: dict = {
+    "TLZF9":  ("0P0001J5YG", "USD"),  # Allianz Income and Growth AMg7 USD
+    "ANZ89":  ("", "USD"),             # ANZ bond — 待補
+    "JFZN3":  ("", "USD"),             # JPMorgan — 待補
+    "FLFM1":  ("", "USD"),             # Franklin — 待補
+    "CTZP0":  ("", "TWD"),             # 中信 — 待補
+}
+
 def _morningstar_search_secid(query: str, currency: str = "TWD") -> str:
     """
     透過 Morningstar 搜尋 API 取得 secId。
@@ -1260,49 +1271,48 @@ def _morningstar_search_secid(query: str, currency: str = "TWD") -> str:
 
 def _src_morningstar_nav(code: str, fund_name: str = "") -> "pd.Series":
     """
-    v6.15: 從 Morningstar 全球 API 取歷史淨值。
-    適用對象：FLFM1（富蘭克林）、JFZN3（JP Morgan）等有國際登記的基金。
-    流程：基金名稱 → Morningstar search → secId → timeseries API
-    注意：純台灣保險包裝（TLZF9/CTZP0）可能查無結果。
+    v6.19: 從 Morningstar 全球 API 取歷史淨值。
+    改進：
+    1. 優先使用 _MORNINGSTAR_SECID_MAP 硬編碼（跳過搜尋，避免 lt.morningstar.com 封鎖）
+    2. 使用正確 currencyId（USD vs TWD）
+    3. 多端點嘗試 + Yahoo Finance 備援
     """
     import datetime as _dt2, json as _j2, urllib.request as _ur2
     rows = {}
     _code = code.upper().strip()
 
-    # 決定搜尋關鍵字：優先使用 fund_name（TDCC 取得的正式名稱），
-    # 若無則用代碼本身
-    _query = fund_name.strip() if fund_name.strip() else _code
-    if not _query:
+    # 1. 查硬編碼映射（TLZF9 等已知 secId，不需搜尋）
+    _mapped = _MORNINGSTAR_SECID_MAP.get(_code, ("", "USD"))
+    sec_id, currency_id = _mapped if _mapped[0] else ("", "USD")
+
+    # 2. 若無硬編碼，嘗試 Morningstar 搜尋
+    if not sec_id:
+        _query = fund_name.strip() if fund_name.strip() else _code
+        if _query:
+            sec_id = _morningstar_search_secid(_query)
+            if not sec_id and _query != _code:
+                sec_id = _morningstar_search_secid(_code)
+
+    if not sec_id:
+        print(f"[src_morningstar] {_code}: 無 secId（未在映射表且搜尋失敗）")
         return pd.Series(dtype=float)
 
-    sec_id = _morningstar_search_secid(_query)
-    if not sec_id:
-        # 若基金名稱查不到，嘗試用代碼
-        if _query != _code:
-            sec_id = _morningstar_search_secid(_code)
-    if not sec_id:
-        print(f"[src_morningstar] {_code}: 無法取得 secId")
-        return pd.Series(dtype=float)
-
-    # Morningstar timeseries price API（公開端點，無需登入）
     end_d   = _dt2.date.today()
     start_d = end_d - _dt2.timedelta(days=400)
-    url = (
-        f"https://tools.morningstar.co.uk/api/rest.svc/timeseries_price/{sec_id}"
-        f"?currencyId=TWD&idtype=Morningstar&frequency=daily"
-        f"&startDate={start_d.isoformat()}&endDate={end_d.isoformat()}"
-        f"&outputType=COMPACTJSON"
-    )
-    hdrs2 = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        "Accept": "application/json",
+    _hdrs_ms = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+        ),
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Connection": "keep-alive",
         "Referer": "https://tools.morningstar.co.uk/",
     }
-    try:
-        req2 = _ur2.Request(url, headers=hdrs2)
-        with _ur2.urlopen(req2, timeout=15) as resp2:
-            data2 = _j2.loads(resp2.read())
-        # COMPACTJSON 格式：{"TimeSeries": {"Security": [{"HistoryDetail": [...]}]}}
+
+    def _parse_ms_compactjson(data2: dict) -> dict:
+        result = {}
         securities = (data2.get("TimeSeries") or {}).get("Security") or []
         for sec in securities:
             for pt in (sec.get("HistoryDetail") or []):
@@ -1310,16 +1320,110 @@ def _src_morningstar_nav(code: str, fund_name: str = "") -> "pd.Series":
                 v     = safe_float(pt.get("Value"))
                 if d_str and v:
                     try:
-                        rows[pd.Timestamp(d_str)] = v
+                        result[pd.Timestamp(d_str)] = v
                     except Exception:
                         pass
+        return result
+
+    # 3a. 主端點：tools.morningstar.co.uk（secId 在 path，UK 伺服器，美國 IP 可用）
+    url_uk = (
+        f"https://tools.morningstar.co.uk/api/rest.svc/timeseries_price/{sec_id}"
+        f"?currencyId={currency_id}&idtype=Morningstar&frequency=daily"
+        f"&startDate={start_d.isoformat()}&endDate={end_d.isoformat()}"
+        f"&outputType=COMPACTJSON"
+    )
+    try:
+        req2 = _ur2.Request(url_uk, headers=_hdrs_ms)
+        with _ur2.urlopen(req2, timeout=15) as resp2:
+            data2 = _j2.loads(resp2.read())
+        rows = _parse_ms_compactjson(data2)
         if rows:
             s = pd.Series(rows).sort_index()
-            print(f"[src_morningstar] ✅ {_code} (secId={sec_id}) {len(s)} 筆")
+            print(f"[src_morningstar] ✅ {_code} (secId={sec_id}, UK) {len(s)} 筆")
             return s
     except Exception as _e2:
-        print(f"[src_morningstar] {_code} timeseries: {_e2}")
+        print(f"[src_morningstar] {_code} UK timeseries: {_e2}")
 
+    # 3b. 備援端點：lt.morningstar.com（token 在 path，secId 在 query param）
+    _tokens = ["klr5zyak8x", "j2uwuwirjh"]
+    for _tok in _tokens:
+        url_lt = (
+            f"https://lt.morningstar.com/api/rest.svc/timeseries_price/{_tok}"
+            f"?id={sec_id}::0&currencyId={currency_id}&idtype=Morningstar&frequency=daily"
+            f"&startDate={start_d.isoformat()}&endDate={end_d.isoformat()}"
+            f"&outputType=COMPACTJSON"
+        )
+        try:
+            _hdrs_lt = {**_hdrs_ms, "Referer": "https://lt.morningstar.com/"}
+            req3 = _ur2.Request(url_lt, headers=_hdrs_lt)
+            with _ur2.urlopen(req3, timeout=12) as resp3:
+                data3 = _j2.loads(resp3.read())
+            rows = _parse_ms_compactjson(data3)
+            if rows:
+                s = pd.Series(rows).sort_index()
+                print(f"[src_morningstar] ✅ {_code} (secId={sec_id}, lt/{_tok}) {len(s)} 筆")
+                return s
+        except Exception as _e3:
+            print(f"[src_morningstar] {_code} lt/{_tok}: {_e3}")
+
+    return pd.Series(dtype=float)
+
+
+def _src_yahoo_finance_nav(code: str) -> "pd.Series":
+    """
+    v6.19: 透過 Yahoo Finance 取共同基金歷史淨值。
+    Yahoo Finance 對 Morningstar 基金使用 {secId}.F 格式作為代碼。
+    適用：_MORNINGSTAR_SECID_MAP 中有 secId 的基金。
+    Yahoo Finance 端點從美國 IP 可存取，不受台灣 IP 封鎖影響。
+    """
+    import json as _jy, urllib.request as _ury
+    _code = code.upper().strip()
+    _mapped = _MORNINGSTAR_SECID_MAP.get(_code, ("", "USD"))
+    sec_id, currency_id = _mapped if _mapped[0] else ("", "USD")
+    if not sec_id:
+        return pd.Series(dtype=float)
+
+    yf_symbol = f"{sec_id}.F"
+    # Yahoo Finance v8 chart API（每日資料，近1年）
+    url = (
+        f"https://query2.finance.yahoo.com/v8/finance/chart/{yf_symbol}"
+        f"?interval=1d&range=2y&includePrePost=false"
+    )
+    hdrs = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+        ),
+        "Accept": "application/json",
+        "Accept-Language": "en-US,en;q=0.9",
+    }
+    try:
+        req = _ury.Request(url, headers=hdrs)
+        with _ury.urlopen(req, timeout=15) as resp:
+            data = _jy.loads(resp.read())
+        result = data.get("chart", {}).get("result", [])
+        if not result:
+            print(f"[src_yahoo] {_code} ({yf_symbol}): 無結果")
+            return pd.Series(dtype=float)
+        r = result[0]
+        timestamps = r.get("timestamp", [])
+        closes = (r.get("indicators", {})
+                   .get("quote", [{}])[0]
+                   .get("close", []))
+        rows = {}
+        for ts, cl in zip(timestamps, closes):
+            if ts and cl:
+                try:
+                    rows[pd.Timestamp(ts, unit="s")] = float(cl)
+                except Exception:
+                    pass
+        if rows:
+            s = pd.Series(rows).sort_index()
+            print(f"[src_yahoo] ✅ {_code} ({yf_symbol}) {len(s)} 筆")
+            return s
+        print(f"[src_yahoo] {_code} ({yf_symbol}): 資料解析後為空")
+    except Exception as _e:
+        print(f"[src_yahoo] {_code} ({yf_symbol}): {_e}")
     return pd.Series(dtype=float)
 
 
@@ -2543,11 +2647,9 @@ def _fetch_fund_single(code: str, force_refresh: bool = False,
             result.setdefault("source_trace", []).append(
                 {"source": "bank_platform", "success": False, "error": "所有平台均無回應"})
 
-    # 2g. v6.15: Morningstar 國際資料源（保險代碼 MoneyDJ 全封鎖時的跨國備援）
-    # 適用：FLFM1（富蘭克林）、JFZN3（JP Morgan）等在 Morningstar 有登記的基金
-    # 注意：純台灣保險包裝（TLZF9/CTZP0）Morningstar 可能無此資料
+    # 2g. v6.19: Morningstar 國際資料源（改進版：使用硬編碼 secId + 正確 currencyId）
+    # TLZF9 = 0P0001J5YG (Allianz Income and Growth AMg7 USD)，已確認存在於 Morningstar
     if len(nav_s) < 10 and _is_insurance_code:
-        # 先嘗試用 TDCC 已取得的基金名稱搜尋（名稱比代碼準）
         _ms_name = result.get("fund_name") or ""
         _ms_s = _src_morningstar_nav(_code, fund_name=_ms_name)
         if len(_ms_s) >= 10:
@@ -2559,7 +2661,22 @@ def _fetch_fund_single(code: str, force_refresh: bool = False,
         else:
             result.setdefault("source_trace", []).append(
                 {"source": "morningstar", "success": False,
-                 "error": "查無資料（可能為純保險包裝）"})
+                 "error": "查無資料"})
+
+    # 2g2. v6.19: Yahoo Finance 備援（Morningstar secId.F 格式，美國 IP 可存取）
+    # Yahoo Finance 對共同基金使用 {morningstar_secId}.F 作為代碼
+    if len(nav_s) < 10 and _is_insurance_code and _code in _MORNINGSTAR_SECID_MAP:
+        _yf_s = _src_yahoo_finance_nav(_code)
+        if len(_yf_s) >= 10:
+            nav_s = _yf_s
+            nav_source = "yahoo_finance"
+            result.setdefault("source_trace", []).append(
+                {"source": "yahoo_finance", "success": True, "nav_count": len(_yf_s)})
+            print(f"[orchestrator] 📈 {_code} Yahoo Finance 命中 {len(_yf_s)} 筆")
+        else:
+            result.setdefault("source_trace", []).append(
+                {"source": "yahoo_finance", "success": False,
+                 "error": "查無資料或代碼未在映射表"})
 
     # 2h. v6.16: 基金公司官網直連（Morningstar 也沒有時，試各公司 TW 官網）
     # FL=富蘭克林坦伯頓  JF=JP Morgan  各公司台灣站無 IP 封鎖
