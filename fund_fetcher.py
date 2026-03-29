@@ -7,7 +7,7 @@
 #            請回報給開發者更新解析邏輯。
 # =================================================
 #!/usr/bin/env python3
-"""fund_fetcher.py v6.18
+"""fund_fetcher.py v6.19
 v6.4 修正:
 - fetch_performance_wb01(): 雙策略解析，多 URL fallback
 - fetch_risk_metrics(): 更強健的欄位偵測，多 URL fallback
@@ -1086,6 +1086,36 @@ _BANK_PLATFORM_CODES: dict = {
         ("cardif.moneydj.com",               "ACTI94-AB116",       "moneydj_wr02"),  # 卡迪夫人壽
     ],
 }
+
+
+def _src_cache_files(code: str) -> "pd.Series":
+    """v6.19: 讀取 GitHub Actions 每日預存的 cache/nav/{CODE}.json。
+    這是 Streamlit Cloud IP 被封鎖時的最終保障：GitHub Actions 每日抓取，
+    Streamlit Cloud 讀快取，完全繞過 IP 封鎖問題。
+    """
+    import json as _json
+    from pathlib import Path as _Path
+    cache_file = _Path(__file__).parent / "cache" / "nav" / f"{code}.json"
+    if not cache_file.exists():
+        return pd.Series(dtype=float)
+    try:
+        data = _json.loads(cache_file.read_text(encoding="utf-8"))
+        history = data.get("history", [])
+        if not history:
+            return pd.Series(dtype=float)
+        rows = {}
+        for item in history:
+            try:
+                rows[pd.Timestamp(item["date"])] = float(item["nav"])
+            except (KeyError, ValueError, TypeError):
+                pass
+        s = pd.Series(rows).sort_index()
+        updated_at = data.get("updated_at", "")
+        print(f"[cache_files] ✅ {code}: {len(s)} 筆 (更新時間: {updated_at[:10]})")
+        return s
+    except Exception as e:
+        print(f"[cache_files] {code} 讀取失敗: {e}")
+        return pd.Series(dtype=float)
 
 
 def _src_bank_platform_nav(base_code: str) -> "pd.Series":
@@ -2392,6 +2422,16 @@ def _fetch_fund_single(code: str, force_refresh: bool = False,
     # ── Step 2: 並行嘗試多來源（NAV）────────────────────────────────
     nav_s = pd.Series(dtype=float)
     nav_source = ""
+
+    # -1. v6.19: GitHub Actions 每日快取（最優先，完全繞過 IP 封鎖）
+    # cache/nav/{CODE}.json 由 .github/workflows/fetch_nav_cache.yml 每日更新
+    _cache_s = _src_cache_files(_code)
+    if len(_cache_s) >= 5:
+        nav_s = _cache_s
+        nav_source = "github_actions_cache"
+        result.setdefault("source_trace", []).append(
+            {"source": "github_actions_cache", "success": True, "nav_count": len(_cache_s)})
+        print(f"[orchestrator] 📦 {_code} 使用 GitHub Actions 快取 {len(_cache_s)} 筆")
 
     # 0. 安聯投信官網（ACTI/ACCP/ACDD 境內基金首選，Colab 友善）
     if _is_domestic_code(_code) and any(_code.startswith(p) for p in ("ACTI","ACCP","ACDD","ACTT")):

@@ -1,0 +1,44 @@
+name: "每日淨值快取更新"
+
+on:
+  schedule:
+    # 每日台灣時間 00:30 執行（UTC 16:30）
+    - cron: "30 16 * * *"
+  workflow_dispatch:
+    # 允許手動觸發（在 GitHub Actions 頁面點 Run workflow）
+
+jobs:
+  fetch-nav:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # 允許 push cache 檔案
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Fetch NAV cache
+        run: python scripts/fetch_nav_cache.py
+
+      - name: Commit and push cache
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add cache/nav/
+          if git diff --staged --quiet; then
+            echo "No new data to commit."
+          else
+            git commit -m "chore: update NAV cache $(date -u '+%Y-%m-%d %H:%M UTC') [skip ci]"
+            git push
+          fi
