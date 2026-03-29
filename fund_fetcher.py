@@ -7,7 +7,7 @@
 #            請回報給開發者更新解析邏輯。
 # =================================================
 #!/usr/bin/env python3
-"""fund_fetcher.py v6.20
+"""fund_fetcher.py v6.21
 v6.4 修正:
 - fetch_performance_wb01(): 雙策略解析，多 URL fallback
 - fetch_risk_metrics(): 更強健的欄位偵測，多 URL fallback
@@ -1079,11 +1079,24 @@ _BANK_PLATFORM_CODES: dict = {
         ("taishinlife.moneydj.com",          "TLZF9-AL001",       "moneydj_wb01"),  # 台新人壽
     ],
     "ANZ89": [
-        ("fund.megabank.com.tw",             "ANZ89-1G11",         "moneydj_wb02"),  # 兆豐銀行
+        ("fund.megabank.com.tw",             "ANZ89-1G11",         "moneydj_wb02"),  # 兆豐銀行（非 moneydj.com）
+        ("chbfund.moneydj.com",              "ANZ89-3827",         "moneydj_wb01"),  # 彰化銀行
     ],
     "ACTI94": [
-        ("fund.megabank.com.tw",             "ACTI94-8A22",        "moneydj_wr02"),  # 兆豐銀行
+        ("fund.megabank.com.tw",             "ACTI94-8A22",        "moneydj_wr02"),  # 兆豐銀行（非 moneydj.com）
         ("cardif.moneydj.com",               "ACTI94-AB116",       "moneydj_wr02"),  # 卡迪夫人壽
+    ],
+    # v6.21: 新增 CTZP0/JFZN3/FLFM1 平台代碼（優先使用非 moneydj.com 域名）
+    "CTZP0": [
+        ("invest.fubonlife.com.tw",          "CTZP0-IGB5",         "moneydj_wb02"),  # 富邦人壽（非 moneydj.com，Streamlit Cloud 較可能可達）
+        ("chubb.moneydj.com",                "CTZP0-BNUIV018",     "moneydj_wb01"),  # CHUBB
+    ],
+    "JFZN3": [
+        ("fund.taipeifubon.com.tw",          "JFZN3-BIAJ",         "moneydj_wb01"),  # 台北富邦銀行（非 moneydj.com）
+        ("chubb.moneydj.com",                "JFZN3-BSUJF060",     "moneydj_wb01"),  # CHUBB
+    ],
+    "FLFM1": [
+        ("cardif.moneydj.com",               "FLFM1-PV045",        "moneydj_wb01"),  # 卡迪夫人壽（BNP Paribas）
     ],
 }
 
@@ -1219,15 +1232,15 @@ def _src_bank_platform_nav(base_code: str) -> "pd.Series":
 # Morningstar 搜尋 secId 快取（避免重複查）
 _ms_secid_cache: dict = {}
 
-# v6.19: 已知的 Morningstar secId 硬編碼映射（跳過搜尋步驟，避免 lt.morningstar.com 封鎖）
-# secId 格式：0P 開頭的 Morningstar 全球 ID
-# 貨幣說明：TLZF9/ANZ89/JFZN3 是 USD 計價；FLFM1 需確認
+# v6.21: 已知的 Morningstar secId 硬編碼映射（跳過搜尋步驟，避免 lt.morningstar.com 封鎖）
+# secId 格式：0P 開頭的 Morningstar 全球 ID（也是 Yahoo Finance {secId}.F 的基礎）
+# 來源驗證：透過 investing.com / Yahoo Finance / global.morningstar.com 確認
 _MORNINGSTAR_SECID_MAP: dict = {
-    "TLZF9":  ("0P0001J5YG", "USD"),  # Allianz Income and Growth AMg7 USD
-    "ANZ89":  ("", "USD"),             # ANZ bond — 待補
-    "JFZN3":  ("", "USD"),             # JPMorgan — 待補
-    "FLFM1":  ("", "USD"),             # Franklin — 待補
-    "CTZP0":  ("", "TWD"),             # 中信 — 待補
+    "TLZF9": ("0P0001J5YG", "USD"),  # Allianz Income and Growth AMg7 USD（ISIN: LU-）
+    "ANZ89": ("0P0000X7WR", "USD"),  # Allianz Income and Growth AM USD（ISIN: LU0820561818）
+    "JFZN3": ("0P0001N4II", "USD"),  # JPMorgan Global Income A (icdiv) USD hedged（ISIN: LU2347655073）
+    "FLFM1": ("", "USD"),            # BNP Paribas Sustainable Global Corporate Bond Classic MD USD — secId 待補
+    "CTZP0": ("", "USD"),            # Invesco Global Investment Grade Corporate Bond E-MD-1 USD — secId 待補
 }
 
 def _morningstar_search_secid(query: str, currency: str = "TWD") -> str:
@@ -2678,11 +2691,14 @@ def _fetch_fund_single(code: str, force_refresh: bool = False,
                 {"source": "yahoo_finance", "success": False,
                  "error": "查無資料或代碼未在映射表"})
 
-    # 2h. v6.16: 基金公司官網直連（Morningstar 也沒有時，試各公司 TW 官網）
-    # FL=富蘭克林坦伯頓  JF=JP Morgan  各公司台灣站無 IP 封鎖
+    # 2h. v6.21: 基金公司官網直連（Morningstar 也沒有時，試各公司 TW 官網）
+    # 注意：FLFM1 是 BNP Paribas（法巴），不是 Franklin（富蘭克林）！
+    # FL 前綴判斷需排除 FLFM（BNP Paribas 在台灣的代碼前綴）
+    _FRANKLIN_PREFIX = ("FLZ", "FLA", "FLB", "FLC", "FLD", "FLE")   # 富蘭克林實際前綴
+    _BNP_FL_CODES = {"FLFM1", "FLFM2"}                               # 法巴用 FL 前綴的代碼
     if len(nav_s) < 10 and _is_insurance_code:
         _intl_s = pd.Series(dtype=float)
-        if _code.startswith("FL"):
+        if _code.startswith("FL") and _code not in _BNP_FL_CODES:
             _intl_s = _src_franklin_nav(_code)
             _intl_src = "franklin_tw"
         elif _code.startswith("JF"):
