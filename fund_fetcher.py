@@ -3260,7 +3260,7 @@ def search_moneydj_by_name(keyword: str) -> list:
 
     # ② MoneyDJ fund-page.html 選單
     for portal_name, url in [
-        ("allianz", "https://tcbbankfund.moneydj.com/fund-page.html")  # Fix: correct subdomain,
+        ("allianz", "https://tcbbankfund.moneydj.com/fund-page.html"),  # Fix: correct subdomain
         ("chubb",   "https://chubb.moneydj.com/fund-page.html?sUrl=$W$HTML$SELECT]DJHTM"),
     ]:
         try:
