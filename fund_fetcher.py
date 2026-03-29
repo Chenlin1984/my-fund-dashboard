@@ -7,7 +7,7 @@
 #            請回報給開發者更新解析邏輯。
 # =================================================
 #!/usr/bin/env python3
-"""fund_fetcher.py v6.21
+"""fund_fetcher.py v6.22
 v6.4 修正:
 - fetch_performance_wb01(): 雙策略解析，多 URL fallback
 - fetch_risk_metrics(): 更強健的欄位偵測，多 URL fallback
@@ -1440,6 +1440,95 @@ def _src_yahoo_finance_nav(code: str) -> "pd.Series":
     return pd.Series(dtype=float)
 
 
+def _src_alphavantage_nav(code: str) -> "pd.Series":
+    """
+    v6.22: 透過 Alpha Vantage API 取共同基金/ETF 歷史淨值。
+
+    Alpha Vantage 是美國服務，Streamlit Cloud（Azure US）可存取，不受台灣 IP 封鎖。
+    需在 Streamlit Secrets 或環境變數中設定 ALPHAVANTAGE_API_KEY。
+    免費方案：25 req/day；若有付費 key 則無限制。
+
+    搜尋策略：
+    1. 使用 _MORNINGSTAR_SECID_MAP 中的 secId 直接當 symbol 查詢
+       例如：TLZF9 → symbol = "0P0001J5YG.F"（Yahoo Finance 格式）
+    2. 若無 secId，嘗試直接用 5 碼代碼搜尋
+    """
+    import json as _ja, urllib.request as _ura, os as _os
+    _code = code.upper().strip()
+
+    # 取得 API Key（優先 Streamlit secrets，次選環境變數）
+    api_key = ""
+    try:
+        import streamlit as _st
+        api_key = _st.secrets.get("ALPHAVANTAGE_API_KEY", "")
+    except Exception:
+        pass
+    if not api_key:
+        api_key = _os.environ.get("ALPHAVANTAGE_API_KEY", "")
+    if not api_key:
+        return pd.Series(dtype=float)
+
+    _hdrs_av = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+        ),
+        "Accept": "application/json",
+    }
+
+    def _av_time_series(symbol: str) -> "pd.Series":
+        """呼叫 Alpha Vantage TIME_SERIES_DAILY_ADJUSTED，解析歷史淨值。"""
+        url = (
+            f"https://www.alphavantage.co/query"
+            f"?function=TIME_SERIES_DAILY_ADJUSTED"
+            f"&symbol={symbol}&outputsize=full&apikey={api_key}"
+        )
+        try:
+            req = _ura.Request(url, headers=_hdrs_av)
+            with _ura.urlopen(req, timeout=20) as resp:
+                data = _ja.loads(resp.read())
+            ts = data.get("Time Series (Daily)", {})
+            if not ts:
+                # API Key 超限或代碼不存在
+                note = data.get("Note", data.get("Information", ""))
+                if note:
+                    print(f"[src_alphavantage] {symbol}: {note[:80]}")
+                return pd.Series(dtype=float)
+            rows = {}
+            for date_str, ohlc in ts.items():
+                try:
+                    # 使用收盤價（adjusted close 更準確）
+                    v = float(ohlc.get("5. adjusted close", ohlc.get("4. close", 0)))
+                    if v > 0:
+                        rows[pd.Timestamp(date_str)] = v
+                except (ValueError, KeyError):
+                    pass
+            if rows:
+                s = pd.Series(rows).sort_index()
+                print(f"[src_alphavantage] ✅ {symbol}: {len(s)} 筆")
+                return s
+        except Exception as _e:
+            print(f"[src_alphavantage] {symbol}: {_e}")
+        return pd.Series(dtype=float)
+
+    # 1. 嘗試 Morningstar secId 格式（{secId}.F）
+    _mapped = _MORNINGSTAR_SECID_MAP.get(_code, ("", "USD"))
+    sec_id = _mapped[0] if _mapped[0] else ""
+    if sec_id:
+        for sym in [f"{sec_id}.F", sec_id]:
+            s = _av_time_series(sym)
+            if len(s) >= 10:
+                return s
+
+    # 2. 直接搜尋 5 碼代碼
+    s = _av_time_series(_code)
+    if len(s) >= 10:
+        return s
+
+    print(f"[src_alphavantage] {_code}: 無資料（secId={sec_id or '無'}）")
+    return pd.Series(dtype=float)
+
+
 def _src_morningstar_meta(code: str, fund_name: str = "") -> dict:
     """
     v6.15: 從 Morningstar 取基金中文名稱與最新淨值。
@@ -2690,6 +2779,22 @@ def _fetch_fund_single(code: str, force_refresh: bool = False,
             result.setdefault("source_trace", []).append(
                 {"source": "yahoo_finance", "success": False,
                  "error": "查無資料或代碼未在映射表"})
+
+    # 2g3. v6.22: Alpha Vantage API（需 ALPHAVANTAGE_API_KEY，美國 IP 可存取）
+    # 設定方式：Streamlit Cloud → Settings → Secrets → ALPHAVANTAGE_API_KEY = "你的KEY"
+    # 免費 key：25 req/day，https://www.alphavantage.co/support/#api-key
+    if len(nav_s) < 10 and _is_insurance_code:
+        _av_s = _src_alphavantage_nav(_code)
+        if len(_av_s) >= 10:
+            nav_s = _av_s
+            nav_source = "alphavantage"
+            result.setdefault("source_trace", []).append(
+                {"source": "alphavantage", "success": True, "nav_count": len(_av_s)})
+            print(f"[orchestrator] 📊 {_code} Alpha Vantage 命中 {len(_av_s)} 筆")
+        else:
+            result.setdefault("source_trace", []).append(
+                {"source": "alphavantage", "success": False,
+                 "error": "無資料或未設定 API Key"})
 
     # 2h. v6.21: 基金公司官網直連（Morningstar 也沒有時，試各公司 TW 官網）
     # 注意：FLFM1 是 BNP Paribas（法巴），不是 Franklin（富蘭克林）！

@@ -217,7 +217,7 @@ with st.sidebar:
     _sb_upd_str = _sb_upd.strftime("%m/%d %H:%M") if _sb_upd else "未載入"
     st.caption(f"📡 總經更新：{_sb_upd_str} ‧ {_now_tw().strftime('%m/%d %H:%M')} TW")
     # ── 版本戳記（版本號更新 = Streamlit Cloud 已部署最新程式）
-    _fetcher_ver = "v6.21"
+    _fetcher_ver = "v6.22"
     st.markdown(
         f"<div style='background:#0d1117;border:1px solid #30363d;border-radius:8px;"
         f"padding:8px 10px;font-size:11px'>"
