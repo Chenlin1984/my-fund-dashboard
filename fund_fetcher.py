@@ -7,7 +7,7 @@
 #            請回報給開發者更新解析邏輯。
 # =================================================
 #!/usr/bin/env python3
-"""fund_fetcher.py v6.16
+"""fund_fetcher.py v6.18
 v6.4 修正:
 - fetch_performance_wb01(): 雙策略解析，多 URL fallback
 - fetch_risk_metrics(): 更強健的欄位偵測，多 URL fallback
@@ -1059,6 +1059,127 @@ def _src_cnyes_div(code: str) -> list:
 
 
 # ══════════════════════════════════════════════════════════════════════
+# v6.18 銀行/保險平台代碼映射 + 直連抓取
+# 使用者提供的真實 URL（從 Google 搜尋確認）：
+#   TLZF9 = 安聯收益成長基金-AMg7月收總收益類股(美元)
+#   各平台有各自後綴代碼，透過不同 domain 提供相同資料
+# ══════════════════════════════════════════════════════════════════════
+
+# 各基金代碼在不同銀行/保險平台的完整代碼（base_code: [(domain, full_code, page_type)]）
+# page_type: "moneydj" = /w/wb/wb01.djhtm 格式; "taiwanlife" = 台灣人壽 .aspx 格式
+_BANK_PLATFORM_CODES: dict = {
+    "TLZF9": [
+        # 銀行自有 domain（非 moneydj.com，IP 封鎖機率低）
+        ("fund.hncb.com.tw",                "TLZF9-1180",        "moneydj_wb02"),  # 華南銀行
+        ("fundchannelnew2.sinotrade.com.tw", "TLZF9-57C0060T",   "moneydj_wb01"),  # 永豐金
+        ("fundrwd.entiebank.com.tw",         "TLZF9-24A7",        "moneydj_wb01"),  # 遠東銀行
+        # 台灣人壽自有伺服器（.aspx 非 MoneyDJ 格式）
+        ("178.taiwanlife.com",               "TLZF9-F1740",       "taiwanlife_mobile"),
+        # MoneyDJ 子網域（Streamlit Cloud 可能封鎖）
+        ("taishinlife.moneydj.com",          "TLZF9-AL001",       "moneydj_wb01"),  # 台新人壽
+    ],
+    "ANZ89": [
+        ("fund.megabank.com.tw",             "ANZ89-1G11",         "moneydj_wb02"),  # 兆豐銀行
+    ],
+    "ACTI94": [
+        ("fund.megabank.com.tw",             "ACTI94-8A22",        "moneydj_wr02"),  # 兆豐銀行
+        ("cardif.moneydj.com",               "ACTI94-AB116",       "moneydj_wr02"),  # 卡迪夫人壽
+    ],
+}
+
+
+def _src_bank_platform_nav(base_code: str) -> "pd.Series":
+    """
+    v6.18: 透過銀行/保險平台 domain 取歷史淨值。
+    優先嘗試銀行自有 domain（非 moneydj.com，較不容易被 IP 封鎖）。
+    支援 MoneyDJ 格式（wb01/wb02/wr02）與台灣人壽 mobile .aspx 格式。
+    """
+    import datetime as _dt_bp, re as _re_bp, urllib.request as _ur_bp
+    _code = base_code.upper().strip()
+    platforms = _BANK_PLATFORM_CODES.get(_code, [])
+    if not platforms:
+        return pd.Series(dtype=float)
+
+    end_d   = _dt_bp.date.today()
+    start_d = end_d - _dt_bp.timedelta(days=400)
+    _hdrs_bp = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Accept": "text/html,*/*;q=0.9",
+        "Accept-Language": "zh-TW,zh;q=0.9",
+    }
+
+    for domain, full_code, ptype in platforms:
+        base_url = f"https://{domain}"
+        rows = {}
+
+        try:
+            if ptype == "taiwanlife_mobile":
+                # 台灣人壽自有平台（ASP.NET，非 MoneyDJ 格式）
+                url = f"{base_url}/mobile/b1.aspx?a={full_code}"
+                _hdrs_bp["Referer"] = f"https://{domain}/"
+                req = _ur_bp.Request(url, headers=_hdrs_bp)
+                with _ur_bp.urlopen(req, timeout=10) as resp:
+                    raw = resp.read()
+                html = raw.decode("utf-8", errors="replace")
+                soup = BeautifulSoup(html, "lxml")
+                for tbl in soup.find_all("table"):
+                    for row in tbl.find_all("tr"):
+                        cells = row.find_all("td")
+                        if len(cells) >= 2:
+                            _d = cells[0].get_text(strip=True)
+                            _v = safe_float(cells[1].get_text(strip=True).replace(",", ""))
+                            if _re_bp.match(r"\d{4}[/-]\d{1,2}[/-]\d{1,2}", _d) and _v:
+                                try:
+                                    rows[pd.Timestamp(_d.replace("/", "-"))] = _v
+                                except Exception:
+                                    pass
+                if rows:
+                    s = pd.Series(rows).sort_index()
+                    print(f"[src_bank] ✅ {_code} @ 台灣人壽 mobile {len(s)} 筆")
+                    return s
+
+            elif ptype.startswith("moneydj_"):
+                page = ptype.split("_")[1]  # wb01 / wb02 / wr02
+                # 先試歷史 NAV（yp004002，400 天）
+                hist_url = (f"{base_url}/funddj/yf/yp004002.djhtm"
+                            f"?A={full_code}&B={start_d.strftime('%Y%m%d')}"
+                            f"&C={end_d.strftime('%Y%m%d')}")
+                _hdrs_bp["Referer"] = f"{base_url}/funddj/ya/{page}.djhtm?a={full_code}"
+                r = fetch_url_with_retry(hist_url, headers=_hdrs_bp, timeout=12, retries=2)
+                if r and is_valid_moneydj_page(r.text):
+                    soup = BeautifulSoup(r.text, "lxml")
+                    for tbl in soup.find_all("table"):
+                        for row in tbl.find_all("tr"):
+                            cells = row.find_all("td")
+                            if len(cells) >= 2:
+                                _d = cells[0].get_text(strip=True)
+                                _v = safe_float(cells[1].get_text(strip=True).replace(",", ""))
+                                if _re_bp.match(r"\d{4}/\d{2}/\d{2}", _d) and _v:
+                                    try:
+                                        rows[pd.Timestamp(_d)] = _v
+                                    except Exception:
+                                        pass
+                    if len(rows) >= 10:
+                        s = pd.Series(rows).sort_index()
+                        print(f"[src_bank] ✅ {_code} @ {domain} hist {len(s)} 筆")
+                        return s
+
+                # fallback：近30日頁（wb01/wb02）
+                wb_url = f"{base_url}/w/wb/{page}.djhtm?a={full_code}"
+                r2 = fetch_url_with_retry(wb_url, headers=_hdrs_bp, timeout=10, retries=2)
+                if r2 and is_valid_moneydj_page(r2.text):
+                    s2 = _parse_nav_html(r2.text)
+                    if len(s2) >= 5:
+                        print(f"[src_bank] ✅ {_code} @ {domain} wb {len(s2)} 筆（近30日）")
+                        return s2
+
+        except Exception as _e_bp:
+            print(f"[src_bank] {domain} {full_code}: {_e_bp}")
+
+    return pd.Series(dtype=float)
+
+
+# ══════════════════════════════════════════════════════════════════════
 # v6.15 Morningstar 國際資料源（FLFM1/JFZN3 等跨國基金適用）
 # 原理：MoneyDJ 保險子網域封鎖 Streamlit Cloud IP
 #       → 改從 Morningstar 全球 API 抓取，無 IP 限制
@@ -1214,9 +1335,135 @@ def _src_morningstar_meta(code: str, fund_name: str = "") -> dict:
 
 
 # ══════════════════════════════════════════════════════════════════════
-# v6.16 基金公司官網直連（FLFM1/JFZN3 適用，完全繞過 MoneyDJ）
-# 來源：各基金公司台灣官網，對 Streamlit Cloud 無 IP 封鎖
+# v6.17 保險公司官網直連 + 連通性診斷工具
+# 針對 TL（台灣人壽）/ FL（富蘭克林）/ JF（JP Morgan）等代碼
 # ══════════════════════════════════════════════════════════════════════
+
+def probe_insurance_urls(code: str = "TLZF9") -> dict:
+    """
+    v6.17 診斷工具：測試各個保險/基金網址是否在 Streamlit Cloud 可存取。
+    在資料診斷頁面呼叫，幫助確認哪些 URL 真正可用。
+    回傳：{url: {"ok": bool, "status": int, "ms": int}}
+    """
+    import urllib.request as _ur, time as _tm
+    _code = code.upper().strip()
+    results = {}
+    candidates = [
+        # ── 台灣人壽自有伺服器（.aspx 非 MoneyDJ 格式，較可能存取）────────
+        f"https://178.taiwanlife.com/mobile/b1.aspx?a={_code}-F1740",
+        # ── 銀行自有 domain（非 moneydj.com，IP 封鎖機率低）───────────────
+        f"https://fund.hncb.com.tw/w/wb/wb02.djhtm?a={_code}-1180",           # 華南銀行
+        f"https://fundchannelnew2.sinotrade.com.tw/w/wb/wb01.djhtm?a={_code}-57C0060T",  # 永豐金
+        f"https://fundrwd.entiebank.com.tw/w/wb/wb01.djhtm?a={_code}-24A7",    # 遠東銀行
+        f"https://fund.megabank.com.tw/w/wb/wb02.djhtm?a=ANZ89-1G11",          # 兆豐銀行
+        # ── TDCC OpenAPI（政府 API，無封鎖）────────────────────────────────
+        f"https://openapi.tdcc.com.tw/v1/opendata/3-2",
+        # ── FundClear ──────────────────────────────────────────────────────
+        f"https://www.fundclear.com.tw/SmartFundAPI/api/FundAjax/GetFundNAV?FundCode={_code}&StartDate=2024/01/01&EndDate=2025/01/01",
+        # ── Morningstar ────────────────────────────────────────────────────
+        f"https://lt.morningstar.com/j2uwuwirjh/util/SecuritySearch.ashx?q={_code}&rows=3&ProductType=FUND",
+        # ── MoneyDJ 子網域（台新人壽，可能封鎖）─────────────────────────
+        f"https://taishinlife.moneydj.com/w/wb/wb01.djhtm?a={_code}-AL001",
+        # ── 富蘭克林 TW / JP Morgan TW ────────────────────────────────────
+        f"https://www.franklintempleton.com.tw/",
+        f"https://am.jpmorgan.com/tw/zh/asset-management/gim/",
+    ]
+    hdrs = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Accept": "*/*"}
+    for url in candidates:
+        t0 = _tm.time()
+        try:
+            req = _ur.Request(url, headers=hdrs)
+            with _ur.urlopen(req, timeout=6) as resp:
+                status = resp.getcode()
+                body_len = len(resp.read(500))
+            ms = int((_tm.time() - t0) * 1000)
+            results[url] = {"ok": True, "status": status, "ms": ms, "bytes": body_len}
+            print(f"[probe] ✅ {status} {ms}ms {url[:60]}")
+        except Exception as _e:
+            ms = int((_tm.time() - t0) * 1000)
+            _msg = str(_e)[:60]
+            results[url] = {"ok": False, "status": 0, "ms": ms, "error": _msg}
+            print(f"[probe] ❌ {_msg} {url[:60]}")
+    return results
+
+
+def _src_taiwanlife_nav(code: str) -> "pd.Series":
+    """
+    v6.17: 台灣人壽官網歷史淨值直連。
+    台灣人壽依法需公開投資型保險基金淨值，嘗試多個可能端點。
+    """
+    import urllib.request as _ur_tl, json as _j_tl
+    import datetime as _dt_tl
+    rows = {}
+    _code = code.upper().strip()
+    end_d   = _dt_tl.date.today()
+    start_d = end_d - _dt_tl.timedelta(days=400)
+
+    _hdrs_tl = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Accept": "application/json, text/html, */*",
+        "Referer": "https://www.taiwanlife.com/",
+        "Accept-Language": "zh-TW,zh;q=0.9",
+    }
+
+    # 嘗試台灣人壽 API 端點（多個可能路徑）
+    _api_urls = [
+        f"https://www.taiwanlife.com/API/Fund/GetHistoryPrice"
+        f"?fundCode={_code}&startDate={start_d.isoformat()}&endDate={end_d.isoformat()}",
+        f"https://www.taiwanlife.com/api/fund/navhistory?code={_code}",
+        f"https://www.taiwanlife.com/Fund/GetFundNav?fundCode={_code}",
+        # 富邦人壽（台灣人壽被富邦合併後）
+        f"https://www.fubon-ins.com.tw/api/fund/GetFundPrice?code={_code}",
+        f"https://www.fubon-ins.com.tw/insurance/fund/navHistory?code={_code}",
+    ]
+    for _url in _api_urls:
+        try:
+            req = _ur_tl.Request(_url, headers=_hdrs_tl)
+            with _ur_tl.urlopen(req, timeout=8) as resp:
+                raw = resp.read()
+            # 先試 JSON 解析
+            try:
+                d = _j_tl.loads(raw)
+                nav_list = (d.get("data") or d.get("navList") or d.get("Data") or
+                            d.get("historyList") or (d if isinstance(d, list) else []))
+                for item in (nav_list or []):
+                    if not isinstance(item, dict):
+                        continue
+                    _d = str(item.get("date") or item.get("Date") or
+                             item.get("navDate") or item.get("priceDate") or "")[:10]
+                    _v = safe_float(item.get("nav") or item.get("NAV") or
+                                    item.get("price") or item.get("value"))
+                    if _d and _v:
+                        try:
+                            rows[pd.Timestamp(_d)] = _v
+                        except Exception:
+                            pass
+            except Exception:
+                # 若非 JSON，嘗試 HTML 解析
+                from bs4 import BeautifulSoup as _BS_tl
+                import re as _re_tl
+                soup_tl = _BS_tl(raw.decode("utf-8", errors="replace"), "lxml")
+                for tbl in soup_tl.find_all("table"):
+                    for row in tbl.find_all("tr"):
+                        cells = row.find_all("td")
+                        if len(cells) >= 2:
+                            _d = cells[0].get_text(strip=True)
+                            _v = safe_float(cells[1].get_text(strip=True).replace(",", ""))
+                            if _re_tl.match(r"\d{4}[/-]\d{2}[/-]\d{2}", _d) and _v:
+                                try:
+                                    rows[pd.Timestamp(_d)] = _v
+                                except Exception:
+                                    pass
+            if rows:
+                s = pd.Series(rows).sort_index()
+                print(f"[src_taiwanlife] ✅ {_code} {len(s)} 筆 ({_url[:50]})")
+                return s
+        except Exception as _e_tl:
+            print(f"[src_taiwanlife] ❌ {_url[:50]}: {_e_tl}")
+
+    return pd.Series(dtype=float)
+
 
 # 各基金公司 API 端點對應表（key=代碼前綴 or 全代碼）
 _FUND_COMPANY_DIRECT_MAP = {
@@ -2242,6 +2489,20 @@ def _fetch_fund_single(code: str, force_refresh: bool = False,
             nav_source = "moneydj_nav30"
             print(f"[orchestrator] 📅 {_code} 使用近30日淨值（{len(nav_s)}筆）")
 
+    # 2f2. v6.18: 銀行/保險平台直連（有明確代碼映射的基金優先）
+    # 使用真實 URL（華南銀行/遠東銀行/台灣人壽），非 moneydj.com domain 較不被封鎖
+    if len(nav_s) < 10 and _code in _BANK_PLATFORM_CODES:
+        _bp_s = _src_bank_platform_nav(_code)
+        if len(_bp_s) >= 5:
+            nav_s = _bp_s
+            nav_source = "bank_platform"
+            result.setdefault("source_trace", []).append(
+                {"source": "bank_platform", "success": True, "nav_count": len(_bp_s)})
+            print(f"[orchestrator] 🏦 {_code} 銀行平台直連 {len(_bp_s)} 筆")
+        else:
+            result.setdefault("source_trace", []).append(
+                {"source": "bank_platform", "success": False, "error": "所有平台均無回應"})
+
     # 2g. v6.15: Morningstar 國際資料源（保險代碼 MoneyDJ 全封鎖時的跨國備援）
     # 適用：FLFM1（富蘭克林）、JFZN3（JP Morgan）等在 Morningstar 有登記的基金
     # 注意：純台灣保險包裝（TLZF9/CTZP0）Morningstar 可能無此資料
@@ -2278,6 +2539,20 @@ def _fetch_fund_single(code: str, force_refresh: bool = False,
             result.setdefault("source_trace", []).append(
                 {"source": _intl_src, "success": True, "nav_count": len(_intl_s)})
             print(f"[orchestrator] 🏢 {_code} 基金公司直連 {len(_intl_s)} 筆")
+
+    # 2i. v6.17: 台灣人壽官網直連（TL 前綴，TLZF9 等）
+    if len(nav_s) < 10 and _is_insurance_code and _code.startswith("TL"):
+        _tl_s = _src_taiwanlife_nav(_code)
+        if len(_tl_s) >= 10:
+            nav_s = _tl_s
+            nav_source = "taiwanlife_direct"
+            result.setdefault("source_trace", []).append(
+                {"source": "taiwanlife_direct", "success": True, "nav_count": len(_tl_s)})
+            print(f"[orchestrator] 🏛 {_code} 台灣人壽官網直連 {len(_tl_s)} 筆")
+        else:
+            result.setdefault("source_trace", []).append(
+                {"source": "taiwanlife_direct", "success": False,
+                 "error": "官網端點查無資料或 URL 需更新"})
 
     if len(nav_s) >= 10:
         result["series"]      = nav_s
