@@ -7,7 +7,7 @@
 #            請回報給開發者更新解析邏輯。
 # =================================================
 #!/usr/bin/env python3
-"""fund_fetcher.py v6.15
+"""fund_fetcher.py v6.16
 v6.4 修正:
 - fetch_performance_wb01(): 雙策略解析，多 URL fallback
 - fetch_risk_metrics(): 更強健的欄位偵測，多 URL fallback
@@ -1213,8 +1213,182 @@ def _src_morningstar_meta(code: str, fund_name: str = "") -> dict:
     return meta
 
 
+# ══════════════════════════════════════════════════════════════════════
+# v6.16 基金公司官網直連（FLFM1/JFZN3 適用，完全繞過 MoneyDJ）
+# 來源：各基金公司台灣官網，對 Streamlit Cloud 無 IP 封鎖
+# ══════════════════════════════════════════════════════════════════════
 
-# ── 預設代碼映射表（內建，不需外部檔案）────────────────────────────
+# 各基金公司 API 端點對應表（key=代碼前綴 or 全代碼）
+_FUND_COMPANY_DIRECT_MAP = {
+    # 富蘭克林坦伯頓（FL 前綴）
+    "FL": {
+        "nav_api": "https://www.franklinresources.com/content/dam/data/navHistory.json",
+        "search_api": "https://www.franklintempleton.com.tw/api/fund/search",
+        "site": "franklintempleton.com.tw",
+    },
+    # JP Morgan Asset Management（JF 前綴）
+    "JF": {
+        "nav_api": "https://am.jpmorgan.com/content/dam/jpm-am-aem/global/en/prices",
+        "search_api": "https://am.jpmorgan.com/tw/zh/asset-management/gim/adv/api/fund-finder",
+        "site": "am.jpmorgan.com/tw",
+    },
+    # 富邦人壽（FS 前綴）
+    "FS": {
+        "site": "www.fubon-ins.com.tw",
+    },
+    # 南山人壽（NS 前綴）
+    "NS": {
+        "site": "www.nanshanlife.com.tw",
+    },
+}
+
+
+def _src_franklin_nav(code: str) -> "pd.Series":
+    """
+    v6.16: 富蘭克林坦伯頓 TW 官網歷史淨值。
+    FLFM1 等 FL 前綴代碼在 Streamlit Cloud 可存取。
+    策略：先用台灣官網搜尋 API 找 ISIN，再查全球 NAV API。
+    """
+    import urllib.request as _ur, json as _j, urllib.parse as _up
+    import datetime as _dt
+    rows = {}
+    _code = code.upper().strip()
+
+    # Step 1: Franklin Templeton TW 基金搜尋
+    _query = _up.quote(_code)
+    _search_urls = [
+        f"https://www.franklintempleton.com.tw/api/fund/search?q={_query}",
+        f"https://www.franklintempleton.com.tw/funds/price-performance?search={_query}",
+    ]
+    _isin = ""
+    for _su in _search_urls:
+        try:
+            req_s = _ur.Request(_su, headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                "Accept": "application/json, */*",
+                "Referer": "https://www.franklintempleton.com.tw/",
+            })
+            with _ur.urlopen(req_s, timeout=8) as resp_s:
+                d_s = _j.loads(resp_s.read())
+            # 嘗試從搜尋結果取 ISIN
+            items = d_s if isinstance(d_s, list) else (d_s.get("funds") or d_s.get("data") or [])
+            for item in (items or []):
+                if isinstance(item, dict):
+                    _isin = item.get("isin") or item.get("ISIN") or ""
+                    if _isin:
+                        print(f"[src_franklin] {_code} → ISIN={_isin}")
+                        break
+            if _isin:
+                break
+        except Exception as _se:
+            print(f"[src_franklin] search {_su[:60]}: {_se}")
+
+    # Step 2: 若找到 ISIN，嘗試 Morningstar（已有完整實作）
+    if _isin:
+        _ms_s = _src_morningstar_nav(code, fund_name=_isin)
+        if len(_ms_s) >= 10:
+            print(f"[src_franklin] ✅ {_code} via ISIN→Morningstar {len(_ms_s)} 筆")
+            return _ms_s
+
+    # Step 3: Franklin TW nav endpoint（備用，部分基金有效）
+    end_d   = _dt.date.today()
+    start_d = end_d - _dt.timedelta(days=400)
+    _nav_urls = [
+        f"https://www.franklintempleton.com.tw/api/fund/nav?code={_code}"
+        f"&startDate={start_d.isoformat()}&endDate={end_d.isoformat()}",
+    ]
+    for _nu in _nav_urls:
+        try:
+            req_n = _ur.Request(_nu, headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                "Accept": "application/json",
+                "Referer": "https://www.franklintempleton.com.tw/",
+            })
+            with _ur.urlopen(req_n, timeout=10) as resp_n:
+                d_n = _j.loads(resp_n.read())
+            nav_list = d_n if isinstance(d_n, list) else (d_n.get("data") or d_n.get("navs") or [])
+            for item in (nav_list or []):
+                if isinstance(item, dict):
+                    _d = str(item.get("date") or item.get("Date") or "")[:10]
+                    _v = safe_float(item.get("nav") or item.get("NAV") or item.get("value"))
+                    if _d and _v:
+                        try:
+                            rows[pd.Timestamp(_d)] = _v
+                        except Exception:
+                            pass
+            if rows:
+                s = pd.Series(rows).sort_index()
+                print(f"[src_franklin] ✅ {_code} direct nav {len(s)} 筆")
+                return s
+        except Exception as _ne:
+            print(f"[src_franklin] nav {_nu[:60]}: {_ne}")
+
+    return pd.Series(dtype=float)
+
+
+def _src_jpmorgan_nav(code: str) -> "pd.Series":
+    """
+    v6.16: JP Morgan Asset Management TW 官網歷史淨值。
+    JFZN3 等 JF 前綴代碼在 Streamlit Cloud 可存取。
+    """
+    import urllib.request as _ur2, json as _j2, urllib.parse as _up2
+    import datetime as _dt2
+    rows = {}
+    _code = code.upper().strip()
+
+    # JP Morgan TW 基金查詢 API
+    _jpm_urls = [
+        f"https://am.jpmorgan.com/tw/zh/asset-management/gim/adv/api/fund-finder?q={_code}",
+        f"https://am.jpmorgan.com/content/dam/jpm-am-aem/tw/zh/prices/{_code}.json",
+    ]
+    _isin = ""
+    for _ju in _jpm_urls:
+        try:
+            req_j = _ur2.Request(_ju, headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                "Accept": "application/json, */*",
+                "Referer": "https://am.jpmorgan.com/tw/",
+            })
+            with _ur2.urlopen(req_j, timeout=10) as resp_j:
+                d_j = _j2.loads(resp_j.read())
+            # 嘗試直接取 NAV 序列
+            nav_list = (d_j.get("navHistory") or d_j.get("priceHistory") or
+                        d_j.get("data") or (d_j if isinstance(d_j, list) else []))
+            for item in (nav_list or []):
+                if isinstance(item, dict):
+                    _d = str(item.get("date") or item.get("Date") or "")[:10]
+                    _v = safe_float(item.get("nav") or item.get("price") or item.get("value"))
+                    if _d and _v:
+                        try:
+                            rows[pd.Timestamp(_d)] = _v
+                        except Exception:
+                            pass
+            # 嘗試取 ISIN
+            if not _isin:
+                _isin = (d_j.get("isin") or d_j.get("ISIN") or
+                         (d_j.get("fund") or {}).get("isin") or "")
+                if _isin:
+                    print(f"[src_jpmorgan] {_code} → ISIN={_isin}")
+            if rows:
+                break
+        except Exception as _je:
+            print(f"[src_jpmorgan] {_ju[:60]}: {_je}")
+
+    if rows:
+        s = pd.Series(rows).sort_index()
+        print(f"[src_jpmorgan] ✅ {_code} {len(s)} 筆")
+        return s
+
+    # fallback: 用 ISIN 走 Morningstar
+    if _isin:
+        _ms_s = _src_morningstar_nav(code, fund_name=_isin)
+        if len(_ms_s) >= 10:
+            print(f"[src_jpmorgan] ✅ {_code} via ISIN→Morningstar {len(_ms_s)} 筆")
+            return _ms_s
+
+    return pd.Series(dtype=float)
+
+
 _DEFAULT_MAPPING = {
     "ACTI171": {"public_code": "ACTI71",  "page_type": "yp010000", "note": "平台碼→公開碼"},
     "ACTI71":  {"public_code": "ACTI71",  "page_type": "yp010000", "note": "境內基金"},
@@ -2085,6 +2259,25 @@ def _fetch_fund_single(code: str, force_refresh: bool = False,
             result.setdefault("source_trace", []).append(
                 {"source": "morningstar", "success": False,
                  "error": "查無資料（可能為純保險包裝）"})
+
+    # 2h. v6.16: 基金公司官網直連（Morningstar 也沒有時，試各公司 TW 官網）
+    # FL=富蘭克林坦伯頓  JF=JP Morgan  各公司台灣站無 IP 封鎖
+    if len(nav_s) < 10 and _is_insurance_code:
+        _intl_s = pd.Series(dtype=float)
+        if _code.startswith("FL"):
+            _intl_s = _src_franklin_nav(_code)
+            _intl_src = "franklin_tw"
+        elif _code.startswith("JF"):
+            _intl_s = _src_jpmorgan_nav(_code)
+            _intl_src = "jpmorgan_tw"
+        else:
+            _intl_src = ""
+        if len(_intl_s) >= 10:
+            nav_s = _intl_s
+            nav_source = _intl_src
+            result.setdefault("source_trace", []).append(
+                {"source": _intl_src, "success": True, "nav_count": len(_intl_s)})
+            print(f"[orchestrator] 🏢 {_code} 基金公司直連 {len(_intl_s)} 筆")
 
     if len(nav_s) >= 10:
         result["series"]      = nav_s
