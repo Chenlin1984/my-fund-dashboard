@@ -217,7 +217,7 @@ with st.sidebar:
     _sb_upd_str = _sb_upd.strftime("%m/%d %H:%M") if _sb_upd else "未載入"
     st.caption(f"📡 總經更新：{_sb_upd_str} ‧ {_now_tw().strftime('%m/%d %H:%M')} TW")
     # ── 版本戳記（版本號更新 = Streamlit Cloud 已部署最新程式）
-    _fetcher_ver = "v6.16"
+    _fetcher_ver = "v6.18"
     st.markdown(
         f"<div style='background:#0d1117;border:1px solid #30363d;border-radius:8px;"
         f"padding:8px 10px;font-size:11px'>"
@@ -5547,6 +5547,33 @@ with tab4:
             f"評分：<b style='color:#e6edf3'>{_phase_diag.get('score','?')}/10</b> "
             f"衰退率：<b style='color:#e6edf3'>{_phase_diag.get('rec_prob','?')}%</b>"
             f"</div>", unsafe_allow_html=True)
+
+    st.divider()
+
+    # ── Section 1b: v6.17 保險代碼連通性診斷 ──────────────────
+    st.markdown("### 🛰️ 保險代碼來源連通性測試")
+    st.caption("測試 Streamlit Cloud 是否可存取各個保險基金資料來源，協助確認哪條路徑可用")
+    _probe_col1, _probe_col2 = st.columns([2, 1])
+    with _probe_col1:
+        _probe_code = st.text_input("測試代碼", value="TLZF9", key="probe_code_input",
+                                    help="輸入要測試的保險代碼（如 TLZF9）")
+    with _probe_col2:
+        st.markdown("<div style='margin-top:28px'></div>", unsafe_allow_html=True)
+        _run_probe = st.button("🛰️ 開始連通性測試", key="btn_probe_urls")
+    if _run_probe and _probe_code.strip():
+        from fund_fetcher import probe_insurance_urls
+        with st.spinner("測試中（約 30 秒）…"):
+            _probe_results = probe_insurance_urls(_probe_code.strip().upper())
+        _ok_urls  = [(u, r) for u, r in _probe_results.items() if r.get("ok")]
+        _bad_urls = [(u, r) for u, r in _probe_results.items() if not r.get("ok")]
+        st.markdown(f"**可存取 {len(_ok_urls)} / {len(_probe_results)} 個端點**")
+        for _u, _r in _ok_urls:
+            st.success(f"✅ HTTP {_r['status']} ({_r['ms']}ms) `{_u[:80]}`")
+        for _u, _r in _bad_urls:
+            st.error(f"❌ {_r.get('error','失敗')} `{_u[:80]}`")
+        if not _ok_urls:
+            st.warning("所有端點均無法存取。Streamlit Cloud IP 可能被該保險公司網站封鎖，"
+                       "建議使用「手動淨值輸入」功能。")
 
     st.divider()
 
