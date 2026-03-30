@@ -23,7 +23,10 @@ from fund_fetcher  import (fetch_fund_by_key, search_moneydj_by_name,
                             fetch_fund_structure, fetch_fund_from_moneydj_url,
                             tdcc_search_fund,
                             safe_float, classify_fetch_status, clean_risk_table,
-                            normalize_result_state, merge_non_empty)
+                            normalize_result_state, merge_non_empty,
+                            set_risk_free_rate,          # Bug1: rf 動態注入
+                            fetch_etf_market_price,      # Bug2: ETF 折溢價
+                            calc_vcp_signal)             # Bug3: 春哥 VCP 訊號
 from ai_engine     import analyze_macro, analyze_fund_pro, analyze_fund_json
 from backtest_engine   import backtest_portfolio, calc_performance_metrics, quick_backtest
 from portfolio_engine  import (calc_fund_factor_score, dividend_safety as div_safety_check,
@@ -1136,6 +1139,55 @@ def _render_fund_analysis(fd, phase_info=None):
                         f"</div>", unsafe_allow_html=True)
         st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
 
+    # ── Bug2 & Bug3: ETF 折溢價警示 + 春哥 VCP 訊號 ─────────────
+    _fn_upper  = (fd.get("fund_name","") + fd.get("category","")).upper()
+    _fcode     = fd.get("fund_code","").strip()
+    _is_etf    = "ETF" in _fn_upper or (len(_fcode) == 4 and _fcode.isdigit())
+    if _is_etf and _fcode:
+        _etf_ticker = _fcode + ".TW"
+        with st.expander("📊 ETF 市場訊號（折溢價 & VCP）", expanded=True):
+            _ec1, _ec2 = st.columns(2)
+
+            # Bug2: 折溢價率
+            with _ec1:
+                st.markdown("**💱 ETF 折溢價率（春哥防呆）**")
+                _nav_v = _nav_now or fd.get("nav_latest")
+                _mp_res = fetch_etf_market_price(_etf_ticker)
+                if _mp_res.get("error"):
+                    st.warning(f"⚠️ 市價暫時無法取得：{_mp_res['error']}")
+                elif _nav_v and _mp_res.get("market_price"):
+                    _mp = _mp_res["market_price"]
+                    _prem = (_mp - _nav_v) / _nav_v * 100
+                    if _prem > 1.0:
+                        st.error(f"🔴 溢價 **{_prem:+.2f}%** — 高於 1%，拒絕追高！\n\n市價 {_mp:.4f}／NAV {_nav_v:.4f}")
+                    elif _prem < -1.0:
+                        st.success(f"🟢 折價 **{_prem:+.2f}%** — 折價買入機會！\n\n市價 {_mp:.4f}／NAV {_nav_v:.4f}")
+                    else:
+                        st.info(f"折溢價率 **{_prem:+.2f}%**，位於合理區間（±1%）\n\n市價 {_mp:.4f}／NAV {_nav_v:.4f}")
+                else:
+                    st.info("NAV 或市價資料不足，無法計算折溢價")
+
+            # Bug3: VCP 訊號
+            with _ec2:
+                st.markdown("**📐 春哥 VCP 波幅收縮訊號**")
+                _vcp = calc_vcp_signal(_etf_ticker)
+                if _vcp.get("error"):
+                    st.warning(f"⚠️ VCP 計算失敗：{_vcp['error']}")
+                else:
+                    _ranges_str = " → ".join(f"{r:.1f}%" for r in _vcp.get("weekly_ranges", []))
+                    if _vcp.get("signal"):
+                        st.success(
+                            f"✅ **VCP 突破買訊！**\n\n"
+                            f"停損價：**{_vcp['stop_loss']}**（入場價 × 0.92）\n\n"
+                            f"MA50：{_vcp['ma50']} ／ MA200：{_vcp.get('ma200','N/A')}\n\n"
+                            f"近5週波幅：{_ranges_str}")
+                    else:
+                        st.info(
+                            f"VCP 條件未完全滿足\n\n"
+                            f"📋 {_vcp.get('reason','')}\n\n"
+                            f"近5週波幅：{_ranges_str or '資料不足'}\n"
+                            f"MA50：{_vcp.get('ma50','N/A')} ／ MA200：{_vcp.get('ma200','N/A')}")
+
     # ── 淨值走勢 + MK 買點 ──────────────────────────────────────
     st.markdown("### 📈 淨值走勢 + MK 買點")
     df_show = s.reset_index(); df_show.columns = ["date","nav"]
@@ -1542,6 +1594,10 @@ with tab1:
                 st.session_state.macro_done       = True
                 st.session_state.macro_ai         = ""
                 st.session_state.macro_last_update = _now_tw()  # Fix: use TW timezone
+                # Bug1: 注入即時 FEDFUNDS 無風險利率至 fund_fetcher.calc_metrics()
+                if ind and "FED_RATE" in ind:
+                    _fed_val = ind["FED_RATE"].get("value", 4.0)
+                    set_risk_free_rate(_fed_val / 100)  # % → 小數，如 5.33 → 0.0533
                 if not _auto_load:
                     # Show latest FRED data date for key monthly indicators
                     _pmi_date = ind.get("PMI", {}).get("date", "")
