@@ -1,42 +1,31 @@
-# 基金監控儀表板 — Claude 行為規則
+# 核心開發與治理協議 (Core Protocol)
 
-## 專案資訊
-- 主要工作目錄：/home/user/my-fund-dashboard
-- Repo：chenlin1984/my-fund-dashboard
-- 平台：Streamlit Cloud
+## §1 狀態與記憶管理 (State & Memory) [防斷線與省 Token 核心]
+- **建立與維護 STATE.md**：專案根目錄必須維持一個 `STATE.md`。內容包含：(1) 各核心檔案的一句話簡介 (2) 目前最新開發進度 (3) 待修復 Bug 清單。
+- **精準讀取 (Context Compression)**：每次啟動新任務或新對話時，**絕對禁止**一開始就掃描全專案程式碼。必須先讀取 `STATE.md` 掌握全局，再精準讀取真正需要的 1~2 個檔案。
+- **中斷預防 (Preemptive Save)**：在執行可能耗費大量時間的操作（如重構、安裝新套件、執行耗時測試）前，**必須先將現有進度寫入 `STATE.md`**，避免因 API Usage 耗盡而意外斷線導致進度遺失。
+- **隨手存檔 (Checkpointing)**：完成一個段落的邏輯或準備發起 PR 前，必須主動更新 `STATE.md`，將剛才的修改濃縮成摘要寫入，確保下一次對話能無縫接軌。
 
-## 一、開發與自省 (Self-Audit)
-每次撰寫或修改代碼後，必須自動執行以下自我審核：
-- **邏輯審查**：確認實作符合需求，無邏輯斷層
-- **邊界測試**：主動考慮 2-3 個異常場景（空輸入、極大/極小值、異常型別）
-- **效能評估**：估計時間/空間複雜度，說明是否可接受
-- **Debug 與修正**：若發現潛在 Bug，直接在最終代碼中標註並修正，不留待後續
+## §2 鋼鐵自省 (Ironclad Self-Audit)
+在正式修改代碼或發起 PR 前，必須在對話框輸出報告（每項嚴格限制 100 字內）：
+- [邏輯]：確保代碼 100% 符合需求，無邏輯斷層。
+- [邊界]：測試空值、極值、異常等 2-3 個極端場景。
+- [效能]：評估時間/空間複雜度與優化點。
+- [Debug]：記錄開發中已修正的潛在 Bug。
 
-## 二、PR 工作流程（User-Merge Policy）
-- 所有代碼變動**禁止**直接推送到 master/main 分支
-- 修改後在新分支提交，發起 PR（Pull Request）即可
-- **不得自動 Merge PR**，由使用者自行在 GitHub 決定何時合併
-- **代碼變更任務完成的定義**：PR 已開啟，提供 GitHub PR 連結給使用者，等待使用者 Merge
+## §3 交付與掌控 (Delivery & Control)
+- **禁止自動合併**：AI 任務終點為「建立 PR 並提供 URL 連結」。
+- **禁止直接 Push 到主分支**：修改後必須使用 `gh pr create` 建立新分支請求。
+- **提供一鍵 Merge 指令**：建立 PR 後，請在對話框中提供 `gh pr merge <PR號碼> --merge --delete-branch` 指令，以便我直接複製貼上來完成合併與分支清理。
 
-## 三、精簡原則
-- 優先使用推理而非冗餘指令；規則應清爽、無重複
-- 不要新增不必要的抽象層或 helper
-- 不要為假設性未來需求設計
+## §4 節能與高效率 (Usage Efficiency)
+- **閉嘴寫扣 (No-Yapping)**：跳過所有客套話、過渡語與原理解釋，直接輸出代碼或修改檔案以節省 Token。
+- **分步確認**：若修改將超過 50 行代碼，必須先用 3 句話確認「實作藍圖」，獲准後才准開始撰寫。
+- **精確編輯 (Precision I/O)**：搜尋時善用 `grep`；修改時嚴禁無意義的「整檔讀取」與「整檔覆蓋」，應針對特定函數或行數進行局部替換。
 
-## 四、UI 強制更新邏輯（Streamlit 專用）
-側邊欄必須包含以下快取清除按鈕，確保使用者可強制載入最新 GitHub 邏輯：
-```python
-if st.sidebar.button("♻️ 強制同步 GitHub 最新邏輯"):
-    st.cache_data.clear()
-    st.cache_resource.clear()
-    st.success("已清除緩存，請重新整理網頁")
-    st.rerun()
-```
+## §5 卡關救援與防無窮迴圈 (Anti-Loop & Stuck Protocol)
+- **重試上限 (Max Retries)**：針對同一個報錯或 Bug，若連續嘗試修改 2 次仍未解決，**嚴禁繼續盲目猜測與重試**。
+- **觸發救援機制**：達到重試上限或邏輯卡關時，立即停止操作。輸出「外部 AI 諮詢清單」：精煉列出(1)問題核心 (2)終端機錯誤訊息 (3)相關代碼片段，交由我詢問其他 AI 進行雙重驗證。
 
-## 核心架構規則（基金儀表板專用）
-- 修改 app.py 或 macro_engine.py 前，確認版本號已更新
-  - ENGINE_VERSION 在 macro_engine.py 頂部，APP_VERSION 在 app.py 頂部
-- 快取清除：手動觸發時必須呼叫 fetch_all_indicators.clear()
-- 趨勢計算：使用 np.polyfit Smart Slope，禁止用 diff()
-- UI 渲染順序：所有 banner/alert 必須在 fetch 完成後才顯示
-- 指標後處理：每個指標 dict 需含 z_score, trend_slope, days_stale, is_stale
+## §6 專案特製規範 (Project Specifics)
+- **UI 數據同步**：涉及數據更新的 UI，必須具備強制清除緩存 (`st.cache_data.clear()`) 的機制。
