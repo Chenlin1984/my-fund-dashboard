@@ -7,7 +7,7 @@
 #            請回報給開發者更新解析邏輯。
 # =================================================
 #!/usr/bin/env python3
-"""fund_fetcher.py v6.22
+"""fund_fetcher.py v6.23
 v6.4 修正:
 - fetch_performance_wb01(): 雙策略解析，多 URL fallback
 - fetch_risk_metrics(): 更強健的欄位偵測，多 URL fallback
@@ -2640,9 +2640,11 @@ def _fetch_fund_single(code: str, force_refresh: bool = False,
         print(f"[orchestrator] 📦 {_code} 使用 GitHub Actions 快取 {len(_cache_s)} 筆")
 
     # 0. 安聯投信官網（ACTI/ACCP/ACDD 境內基金首選，Colab 友善）
-    if _is_domestic_code(_code) and any(_code.startswith(p) for p in ("ACTI","ACCP","ACDD","ACTT")):
-        nav_s = _src_allianzgi_nav(_code)
-        if len(nav_s) >= 5:
+    # v6.23 fix: 加入 len(nav_s) < 10 防護，避免覆蓋 GitHub Actions 快取資料
+    if len(nav_s) < 10 and _is_domestic_code(_code) and any(_code.startswith(p) for p in ("ACTI","ACCP","ACDD","ACTT")):
+        _allianz_s = _src_allianzgi_nav(_code)
+        if len(_allianz_s) >= 5:
+            nav_s = _allianz_s
             nav_source = "allianzgi_tw"
 
     # 2a. FundClear（境外最穩）
