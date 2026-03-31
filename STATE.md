@@ -26,5 +26,8 @@ _最後更新：2026-03-31_
 ## 待 Merge PR
 - PR #21：NAS Proxy 串接（fund_fetcher v6.24）
 
+## 待 Merge PR
+- PR #21：NAS Proxy 串接（fund_fetcher v6.24）→ 待 merge
+
 ## 待修復 Bug 清單
 - 台股法人籌碼：yfinance 覆蓋有限，未來可接 FinMind API
