@@ -17,14 +17,13 @@ _最後更新：2026-03-31_
 
 ## 目前開發進度
 - [2026-03-31] **[完成] NAS Proxy 串接**：fund_fetcher.py 全部 requests 注入 NAS Proxy，407/403/timeout 分層處理。PR #21 待 merge。
+- [2026-03-31] **[完成] Bug 修復**：Sharpe rf 動態化 + ETF 折溢價警示 + 春哥 VCP 訊號。已 merged (PR #18)。
 - [2026-03-31] **[完成] 新版 UI 三分頁**：pages/ 目錄，策略選股/深度診斷/庫存損益。已 merged (PR #20)。
 - [2026-03-31] **[完成] ETF 追蹤 Tab**：app.py tab6，國內外 ETF 即時報價。已 merged (PR #20)。
-- [2026-03-31] **[完成] Bug 修復**：Sharpe rf 動態化 + ETF 折溢價警示 + 春哥 VCP 訊號。PR #18 rebase 中。
 - [2026-03-31] **虛假資料掃描**：全庫無硬寫假數據。
 - [2026-03-30] 系統排毒與協議升級完成：CLAUDE.md 終極版 6 板塊協議。
 
 ## 待 Merge PR
-- PR #18：ETF VCP/折溢價/Sharpe rf（rebase 解衝突後 push）
 - PR #21：NAS Proxy 串接（fund_fetcher v6.24）
 
 ## 待修復 Bug 清單

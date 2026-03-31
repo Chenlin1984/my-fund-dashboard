@@ -26,6 +26,40 @@ v6.2 修正:
 import requests, re, time
 
 # ══════════════════════════════════════════════════════════════════
+# NAS Proxy 設定（讀取 st.secrets，缺失時降級直連）
+# ══════════════════════════════════════════════════════════════════
+_PROXY_CFG_CACHE: dict | None = None   # None=未初始化；{}=已嘗試但不可用
+
+
+def get_proxy_config() -> dict | None:
+    """
+    從 st.secrets["proxy"] 讀取 NAS Proxy 帳密並組建設定。
+    - 成功 → 回傳 {"http": "http://user:pwd@host:port", "https": ...}
+    - secrets 缺失 / 任何例外 → 回傳 None（降級直連）
+    結果快取於模組層級，同一程序內只讀一次。
+    """
+    global _PROXY_CFG_CACHE
+    if _PROXY_CFG_CACHE is not None:
+        return _PROXY_CFG_CACHE if _PROXY_CFG_CACHE else None
+    try:
+        import streamlit as _st
+        _p        = _st.secrets["proxy"]
+        _user     = _p["username"]
+        _pwd      = _p["password"]
+        _endpoint = _p["endpoint"]
+        _url      = f"http://{_user}:{_pwd}@{_endpoint}"
+        _PROXY_CFG_CACHE = {"http": _url, "https": _url}
+    except Exception:
+        _PROXY_CFG_CACHE = {}   # 已嘗試，不可用
+    return _PROXY_CFG_CACHE if _PROXY_CFG_CACHE else None
+
+
+def _proxies() -> dict:
+    """便利函式：回傳 proxies dict（無 Proxy 時為空 dict，不影響直連）"""
+    return get_proxy_config() or {}
+
+
+# ══════════════════════════════════════════════════════════════════
 # v13 排錯補強：統一安全工具函式
 # ══════════════════════════════════════════════════════════════════
 
@@ -75,10 +109,23 @@ def fetch_url_with_retry(url, headers=None, params=None,
     }
     if headers:
         _headers.update(headers)
-    for _ in range(retries):
+    _proxy = _proxies()
+    for attempt in range(retries):
         try:
             resp = requests.get(url, headers=_headers,
-                                params=params, timeout=timeout)
+                                params=params, timeout=timeout,
+                                proxies=_proxy)
+            # 407 Proxy Auth 失敗 → 立即回報，不重試
+            if resp.status_code == 407:
+                print(f"[proxy] 407 Proxy Auth Failed — 請確認 st.secrets[proxy] 帳密正確")
+                return None
+            # 403 Target Blocked → 隨機延遲後重試
+            if resp.status_code == 403:
+                import random as _rnd
+                _delay = _rnd.uniform(2.5, 6.0)
+                print(f"[proxy] 403 Blocked（attempt {attempt+1}），等待 {_delay:.1f}s 後重試")
+                _t.sleep(_delay)
+                continue
             if resp.status_code == 200:
                 # v13.9 關鍵修正：MoneyDJ 全站 Big5，強制解碼
                 # 若讓 requests 自行猜測編碼（通常猜 UTF-8）會全部亂碼
@@ -88,6 +135,10 @@ def fetch_url_with_retry(url, headers=None, params=None,
                     resp.encoding = resp.apparent_encoding or "utf-8"
                 if resp.text.strip():
                     return resp
+        except requests.exceptions.ProxyError as e:
+            print(f"[proxy] ProxyError（attempt {attempt+1}）：{e} — 確認 NAS 已啟動且 Port 3128 已轉發")
+        except requests.exceptions.Timeout:
+            print(f"[proxy] Timeout（attempt {attempt+1}）：{url[:60]}")
         except Exception as e:
             print(f"錯誤：{e}")
         _t.sleep(sleep_sec)
@@ -926,7 +977,7 @@ def _cnyes_resolve_code(moneydj_code: str) -> list:
         try:
             url = (f"https://fund.api.cnyes.com/fund/api/v2/funds/search"
                    f"?key={_uquote(key)}&limit={limit}")
-            r = requests.get(url, headers=_hdrs, timeout=10)
+            r = requests.get(url, headers=_hdrs, timeout=10, proxies=_proxies())
             if r.status_code == 200:
                 data = r.json()
                 items = (data.get("data", {}).get("list")
@@ -991,7 +1042,7 @@ def fetch_nav_cnyes(code: str) -> pd.Series:
         _url = (f"https://fund.api.cnyes.com/fund/api/v2/funds/{_cand}"
                 f"/nav?start={start_ms}&end={end_ms}")
         try:
-            r = requests.get(_url, headers=_hdrs, timeout=15)
+            r = requests.get(_url, headers=_hdrs, timeout=15, proxies=_proxies())
             if r.status_code != 200:
                 continue
             data = r.json()
@@ -1023,7 +1074,7 @@ def fetch_div_cnyes(code: str) -> list:
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
             "Accept": "application/json",
             "Referer": "https://fund.cnyes.com/",
-        }, timeout=15)
+        }, timeout=15, proxies=_proxies())
         if r.status_code == 200:
             data = r.json()
             items = (data.get("data") or data.get("items") or [])
@@ -3510,7 +3561,7 @@ def search_fundclear(keyword: str) -> list:
         }
         r = requests.post(
             "https://www.fundclear.com.tw/api/offshore/fund-info/fund-search/query",
-            json=body, headers=HDR_JSON, timeout=20
+            json=body, headers=HDR_JSON, timeout=20, proxies=_proxies()
         )
         print(f"[fundclear] status={r.status_code}")
         if r.status_code == 200:
@@ -3552,7 +3603,7 @@ def search_moneydj_by_name(keyword: str) -> list:
         ("chubb",   "https://chubb.moneydj.com/fund-page.html?sUrl=$W$HTML$SELECT]DJHTM"),
     ]:
         try:
-            r = requests.get(url, headers=HDR, timeout=20)
+            r = requests.get(url, headers=HDR, timeout=20, proxies=_proxies())
             if r.status_code != 200: continue
             # v13.3: 同時支援 TLZF9 / ACTI98（無 dash）和 ABC-XYZ123（有 dash）
             for val, text in re.findall(
@@ -3574,7 +3625,7 @@ def search_moneydj_by_name(keyword: str) -> list:
     if not results:
         try:
             url = f"https://www.moneydj.com/funddjx/fundsearch.xdjhtm?keyword={requests.utils.quote(kw)}"
-            r = requests.get(url, headers=HDR, timeout=15)
+            r = requests.get(url, headers=HDR, timeout=15, proxies=_proxies())
             if r.status_code == 200:
                 soup = BeautifulSoup(r.text, "lxml")
                 for tbl in soup.find_all("table"):
@@ -3645,7 +3696,7 @@ def fetch_nav(full_key: str, portal: str = "") -> pd.Series:
         ]
     for url in urls:
         try:
-            r = requests.get(url, headers=HDR, timeout=25)
+            r = requests.get(url, headers=HDR, timeout=25, proxies=_proxies())
             print(f"[fetch_nav] {url[:65]} → {r.status_code}")
             if r.status_code != 200: continue
             s = _parse_nav_html(r.text)
@@ -3677,7 +3728,7 @@ def fetch_div(full_key: str, portal: str = "") -> list:
         ]
     for url in urls:
         try:
-            r = requests.get(url, headers=HDR, timeout=20)
+            r = requests.get(url, headers=HDR, timeout=20, proxies=_proxies())
             if r.status_code != 200: continue
             soup = BeautifulSoup(r.text, "lxml")
             for tbl in soup.find_all("table"):
@@ -4445,7 +4496,7 @@ def fetch_fund_structure(full_key: str, portal: str = "") -> dict:
         for base in bases:
             url = base.rstrip("/") + path
             try:
-                r = requests.get(url, headers=HDR, timeout=20)
+                r = requests.get(url, headers=HDR, timeout=20, proxies=_proxies())
                 if r.status_code != 200:
                     continue
                 if len(r.text) < 500:
