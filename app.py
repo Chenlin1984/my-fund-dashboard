@@ -349,12 +349,13 @@ with st.sidebar:
     st.session_state["debug_mode"] = _debug_mode
     st.caption("資料來源：FRED / yfinance / TDCC / MoneyDJ")
 
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "🌐 總經儀表板",
     "📊 我的投資組合",
     "🔍 個別基金分析",
     "🔬 資料診斷",
     "📖 說明書",
+    "🏦 ETF 追蹤",
 ])
 
 # ═══════════════════════════════════════════════════════════
@@ -6064,3 +6065,176 @@ TPI = Z(Breadth) × 0.4 + Z(FII) × 0.3 + Z(M1B/M2) × 0.3
 3. 找好替換標的後，在「買點」時換（避免在高點換進）
 4. 核心資產不輕易換（穩定配息 > 短期績效排名）
 """)
+
+# ══════════════════════════════════════════════════════════════════════
+# 🏦 Tab6 — ETF 追蹤
+# ══════════════════════════════════════════════════════════════════════
+
+_DEFAULT_TW_ETF = ["0050", "00878", "00919", "00929", "006208", "00646", "00679B"]
+_DEFAULT_US_ETF = ["SPY", "QQQ", "VTI", "VOO", "SCHD", "IVV", "GLD", "TLT"]
+
+
+@st.cache_data(ttl=900, show_spinner=False)
+def _fetch_etf_batch(tickers: tuple) -> dict:
+    """批次抓取 ETF 快照（yfinance），TTL 15 分鐘"""
+    import yfinance as _yf
+    result = {}
+    for raw in tickers:
+        ticker = clean_ticker(raw)
+        try:
+            t_obj = _yf.Ticker(ticker)
+            hist2  = t_obj.history(period="2d", auto_adjust=True)
+            if hist2.empty:
+                result[raw] = {"error": "無資料（代碼可能有誤）"}
+                continue
+            prev_close = float(hist2["Close"].iloc[-2]) if len(hist2) >= 2 else float(hist2["Close"].iloc[0])
+            last_close = float(hist2["Close"].iloc[-1])
+            chg        = last_close - prev_close
+            chg_pct    = chg / prev_close * 100 if prev_close else 0
+            vol        = int(hist2["Volume"].iloc[-1]) if "Volume" in hist2.columns else 0
+            hist52     = t_obj.history(period="1y", auto_adjust=True)
+            high52     = float(hist52["High"].max()) if not hist52.empty else None
+            low52      = float(hist52["Low"].min())  if not hist52.empty else None
+            try:
+                fi      = t_obj.fast_info
+                name    = getattr(fi, "short_name", None) or ticker
+                currency= getattr(fi, "currency",   "")
+            except Exception:
+                name, currency = ticker, ""
+            result[raw] = {
+                "ticker": ticker, "name": name, "currency": currency,
+                "price": last_close, "chg": chg, "chg_pct": chg_pct,
+                "volume": vol, "high52": high52, "low52": low52,
+            }
+        except Exception as e:
+            result[raw] = {"error": str(e)[:80]}
+    return result
+
+
+def _render_etf_table(etf_list: list, region_key: str):
+    """渲染 ETF 報價表 + 移除按鈕"""
+    if not etf_list:
+        st.info("清單為空，請在上方輸入代碼新增 ETF。")
+        return
+    with st.spinner("正在抓取報價（yfinance）..."):
+        snap = _fetch_etf_batch(tuple(etf_list))
+
+    _hdr_cols = ["代碼", "名稱", "最新價格", "漲跌", "漲跌幅", "52週高", "52週低", "成交量", ""]
+    _hdr_html = "".join(
+        f"<th style='padding:8px 10px;text-align:left;font-size:11px;"
+        f"color:#888;font-weight:700;border-bottom:2px solid #30363d'>{h}</th>"
+        for h in _hdr_cols
+    )
+    _rows_html = ""
+    for _raw in etf_list:
+        _d = snap.get(_raw, {})
+        if "error" in _d:
+            _cells = (
+                f"<td style='padding:8px 10px;font-weight:700;color:#f44336'>{_raw}</td>"
+                f"<td colspan='7' style='color:#f44336;padding:8px 10px;font-size:11px'>{_d['error']}</td>"
+                f"<td></td>"
+            )
+            _row_bg = "#1a0a0a"
+        else:
+            _chg_pct = _d.get("chg_pct", 0)
+            _clr     = "#00c853" if _chg_pct > 0 else ("#f44336" if _chg_pct < 0 else "#888")
+            _arrow   = "▲" if _chg_pct > 0 else ("▼" if _chg_pct < 0 else "—")
+            _row_bg  = "#0a1a0a" if _chg_pct > 0 else ("#1a0a0a" if _chg_pct < 0 else "#0d1117")
+            _bar_w   = min(abs(_chg_pct) * 5, 100)
+            _cur     = _d.get("currency", "")
+            _h52     = f"{_d['high52']:,.2f}" if _d.get("high52") else "—"
+            _l52     = f"{_d['low52']:,.2f}"  if _d.get("low52")  else "—"
+            _vol     = f"{_d['volume']:,}"    if _d.get("volume") else "—"
+            _cells = (
+                f"<td style='padding:8px 10px;font-weight:700;color:#e6edf3'>{_raw}</td>"
+                f"<td style='padding:8px 10px;color:#aaa;font-size:11px'>{(_d.get('name') or '')[:22]}</td>"
+                f"<td style='padding:8px 10px;color:#e6edf3'>{_cur} {_d['price']:,.2f}</td>"
+                f"<td style='padding:8px 10px;color:{_clr}'>{_arrow} {abs(_d['chg']):.2f}</td>"
+                f"<td style='padding:8px 10px'>"
+                f"<span style='color:{_clr};font-weight:700'>{_arrow} {abs(_chg_pct):.2f}%</span>"
+                f"<div style='height:3px;background:{_clr};width:{_bar_w}%;border-radius:2px;"
+                f"margin-top:2px;opacity:0.55'></div></td>"
+                f"<td style='padding:8px 10px;color:#888;font-size:11px'>{_h52}</td>"
+                f"<td style='padding:8px 10px;color:#888;font-size:11px'>{_l52}</td>"
+                f"<td style='padding:8px 10px;color:#666;font-size:11px'>{_vol}</td>"
+                f"<td></td>"
+            )
+        _rows_html += (
+            f"<tr style='background:{_row_bg};border-bottom:1px solid #21262d'>{_cells}</tr>"
+        )
+
+    st.markdown(
+        f"<div style='overflow-x:auto'>"
+        f"<table style='width:100%;border-collapse:collapse;background:#0d1117'>"
+        f"<thead><tr>{_hdr_html}</tr></thead>"
+        f"<tbody>{_rows_html}</tbody></table></div>",
+        unsafe_allow_html=True,
+    )
+    st.caption(f"⏱ 資料快取 15 分鐘｜共 {len(etf_list)} 檔")
+
+    # ── 移除 ETF ──
+    _dc1, _dc2 = st.columns([3, 1])
+    with _dc1:
+        _del_code = st.selectbox(
+            "移除 ETF", ["— 選擇要移除的代碼 —"] + etf_list,
+            key=f"etf_del_{region_key}", label_visibility="collapsed"
+        )
+    with _dc2:
+        st.markdown("<div style='margin-top:4px'></div>", unsafe_allow_html=True)
+        if st.button("🗑️ 移除", key=f"btn_del_etf_{region_key}") and not _del_code.startswith("—"):
+            etf_list.remove(_del_code)
+            _fetch_etf_batch.clear()
+            st.rerun()
+
+
+with tab6:
+    st.markdown("## 🏦 ETF 追蹤清單")
+    st.caption("即時報價 via yfinance｜每 15 分鐘快取｜台灣 ETF 自動補 .TW 後綴")
+
+    # ── Session state 初始化 ──
+    if "etf_tw_list" not in st.session_state:
+        st.session_state.etf_tw_list = list(_DEFAULT_TW_ETF)
+    if "etf_us_list" not in st.session_state:
+        st.session_state.etf_us_list = list(_DEFAULT_US_ETF)
+
+    # ── 頂部工具列：新增 + 刷新 ──
+    _ea, _eb, _ec, _ed = st.columns([2, 1, 1, 1])
+    with _ea:
+        _new_code = st.text_input(
+            "新增 ETF 代碼", placeholder="例：00850、ARKK、0056",
+            key="etf_add_input", label_visibility="collapsed"
+        )
+    with _eb:
+        _region_sel = st.selectbox(
+            "市場", ["🇹🇼 台灣 ETF", "🌍 海外 ETF"],
+            key="etf_region_sel", label_visibility="collapsed"
+        )
+    with _ec:
+        if st.button("➕ 新增", key="btn_add_etf", use_container_width=True):
+            _code_in = _new_code.strip().upper()
+            if _code_in:
+                if "台灣" in _region_sel:
+                    if _code_in not in st.session_state.etf_tw_list:
+                        st.session_state.etf_tw_list.append(_code_in)
+                        _fetch_etf_batch.clear()
+                        st.rerun()
+                    else:
+                        st.warning(f"{_code_in} 已在清單中")
+                else:
+                    if _code_in not in st.session_state.etf_us_list:
+                        st.session_state.etf_us_list.append(_code_in)
+                        _fetch_etf_batch.clear()
+                        st.rerun()
+                    else:
+                        st.warning(f"{_code_in} 已在清單中")
+    with _ed:
+        if st.button("♻️ 強制刷新", key="btn_etf_refresh", use_container_width=True):
+            _fetch_etf_batch.clear()
+            st.rerun()
+
+    # ── 子 Tab：台灣 / 海外 ──
+    _etf_sub1, _etf_sub2 = st.tabs(["🇹🇼 台灣 ETF", "🌍 海外 ETF"])
+    with _etf_sub1:
+        _render_etf_table(st.session_state.etf_tw_list, "tw")
+    with _etf_sub2:
+        _render_etf_table(st.session_state.etf_us_list, "us")
