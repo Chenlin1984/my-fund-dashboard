@@ -24,9 +24,6 @@ _最後更新：2026-03-31_
 - [2026-03-30] 系統排毒與協議升級完成：CLAUDE.md 終極版 6 板塊協議。
 
 ## 待 Merge PR
-- PR #21：NAS Proxy 串接（fund_fetcher v6.24）
-
-## 待 Merge PR
 - PR #21：NAS Proxy 串接（fund_fetcher v6.24）→ 待 merge
 
 ## 待修復 Bug 清單
