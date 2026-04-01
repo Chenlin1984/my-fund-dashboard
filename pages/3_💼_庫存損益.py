@@ -48,7 +48,7 @@ def _fetch_prices(tickers: tuple) -> dict[str, float]:
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def _calc_mdd(ticker: str) -> float | None:
+def _calc_mdd(ticker: str):
     try:
         h = yf.Ticker(ticker).history(period="1y", auto_adjust=True)
         if h.empty:
