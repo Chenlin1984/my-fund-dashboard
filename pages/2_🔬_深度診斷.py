@@ -108,7 +108,7 @@ sub1, sub2, sub3, sub4 = st.tabs(["📈 K線技術面", "🏦 法人籌碼", "�
 # ════════════════════════════════════════════════════════
 with sub1:
     @st.cache_data(ttl=900, show_spinner=False)
-    def _build_kline(ticker: str) -> go.Figure | None:
+    def _build_kline(ticker: str):
         df = _load_hist(ticker, "1y").copy()
         if df.empty:
             return None
@@ -269,7 +269,7 @@ with sub3:
             stmt = income_stmt[cols_sorted]
             col_labels = [str(c)[:10] for c in cols_sorted]
 
-            def _safe_row(key: str) -> pd.Series | None:
+            def _safe_row(key: str):
                 for k in income_stmt.index:
                     if key.lower() in str(k).lower():
                         return stmt.loc[k].apply(pd.to_numeric, errors="coerce")
@@ -345,7 +345,7 @@ with sub3:
 # ════════════════════════════════════════════════════════
 with sub4:
     @st.cache_data(ttl=3600, show_spinner=False)
-    def _build_river(ticker: str) -> tuple[go.Figure | None, str]:
+    def _build_river(ticker: str):
         hist5y = _load_hist(ticker, "5y")
         info_d = _load_info(ticker)
         if hist5y.empty:

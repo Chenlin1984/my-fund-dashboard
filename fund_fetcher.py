@@ -28,10 +28,10 @@ import requests, re, time
 # ══════════════════════════════════════════════════════════════════
 # NAS Proxy 設定（讀取 st.secrets，缺失時降級直連）
 # ══════════════════════════════════════════════════════════════════
-_PROXY_CFG_CACHE: dict | None = None   # None=未初始化；{}=已嘗試但不可用
+_PROXY_CFG_CACHE = None   # None=未初始化；{}=已嘗試但不可用
 
 
-def get_proxy_config() -> dict | None:
+def get_proxy_config():
     """
     從 st.secrets["proxy"] 讀取 NAS Proxy 帳密並組建設定。
     - 成功 → 回傳 {"http": "http://user:pwd@host:port", "https": ...}

@@ -36,7 +36,7 @@ PHASE_ALLOC = {
 
 # ── 資料抓取 ─────────────────────────────────────────────
 @st.cache_data(ttl=900, show_spinner=False)
-def get_twii() -> tuple[float | None, float | None]:
+def get_twii():
     try:
         h = yf.Ticker("^TWII").history(period="2d", auto_adjust=True)
         if h.empty:
