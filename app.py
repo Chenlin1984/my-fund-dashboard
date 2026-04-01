@@ -220,7 +220,7 @@ with st.sidebar:
     _sb_upd_str = _sb_upd.strftime("%m/%d %H:%M") if _sb_upd else "未載入"
     st.caption(f"📡 總經更新：{_sb_upd_str} ‧ {_now_tw().strftime('%m/%d %H:%M')} TW")
     # ── 版本戳記（版本號更新 = Streamlit Cloud 已部署最新程式）
-    _fetcher_ver = "v6.23"
+    _fetcher_ver = "v6.24"
     st.markdown(
         f"<div style='background:#0d1117;border:1px solid #30363d;border-radius:8px;"
         f"padding:8px 10px;font-size:11px'>"
@@ -244,10 +244,24 @@ with st.sidebar:
     st.divider()
 
     # ── API 狀態 ────────────────────────────────────────
+    from fund_fetcher import get_proxy_config
+    _proxy_cfg = get_proxy_config()
+    _proxy_endpoint = ""
+    if _proxy_cfg:
+        _proxy_url = _proxy_cfg.get("http", "")
+        # Extract endpoint (remove credentials for display)
+        import re as _re
+        _m = _re.search(r'@(.+)$', _proxy_url)
+        _proxy_endpoint = _m.group(1) if _m else "已設定"
     st.markdown(
         f"{'✅' if FRED_KEY else '❌'} FRED　　"
-        f"{'✅' if GEMINI_KEY else '❌'} Gemini"
+        f"{'✅' if GEMINI_KEY else '❌'} Gemini　　"
+        f"{'✅' if _proxy_cfg else '⚠️'} Proxy"
     )
+    if _proxy_cfg:
+        st.caption(f"🔒 Proxy：{_proxy_endpoint}")
+    else:
+        st.caption("⚠️ Proxy 未設定（直連 MoneyDJ 可能被擋）")
 
     # ── 強制同步 GitHub 最新邏輯
     if st.sidebar.button("♻️ 強制同步 GitHub 最新邏輯", use_container_width=True,
