@@ -33,9 +33,11 @@ _PROXY_CFG_CACHE = None   # None=未初始化；{}=已嘗試但不可用
 
 def get_proxy_config():
     """
-    從 st.secrets["proxy"] 讀取 NAS Proxy 帳密並組建設定。
-    - 成功 → 回傳 {"http": "http://user:pwd@host:port", "https": ...}
-    - secrets 缺失 / 任何例外 → 回傳 None（降級直連）
+    讀取 NAS Proxy 設定，支援兩種格式（優先新格式）：
+      新格式：PROXY_URL = "http://user:pwd@host:port"
+      舊格式：[proxy] section with username/password/endpoint
+    - 成功 → 回傳 {"http": url, "https": url}
+    - 缺失 / 任何例外 → 回傳 None（降級直連）
     結果快取於模組層級，同一程序內只讀一次。
     """
     global _PROXY_CFG_CACHE
@@ -43,11 +45,13 @@ def get_proxy_config():
         return _PROXY_CFG_CACHE if _PROXY_CFG_CACHE else None
     try:
         import streamlit as _st
-        _p        = _st.secrets["proxy"]
-        _user     = _p["username"]
-        _pwd      = _p["password"]
-        _endpoint = _p["endpoint"]
-        _url      = f"http://{_user}:{_pwd}@{_endpoint}"
+        # 新格式：單行 PROXY_URL（優先）
+        if "PROXY_URL" in _st.secrets:
+            _url = _st.secrets["PROXY_URL"]
+        # 舊格式：[proxy] section（向下相容）
+        else:
+            _p   = _st.secrets["proxy"]
+            _url = f"http://{_p['username']}:{_p['password']}@{_p['endpoint']}"
         _PROXY_CFG_CACHE = {"http": _url, "https": _url}
     except Exception:
         _PROXY_CFG_CACHE = {}   # 已嘗試，不可用
