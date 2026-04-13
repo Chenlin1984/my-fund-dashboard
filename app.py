@@ -263,6 +263,31 @@ with st.sidebar:
     else:
         st.caption("⚠️ Proxy 未設定（直連 MoneyDJ 可能被擋）")
 
+    # ── Proxy 連線測試 ──────────────────────────────────
+    if st.sidebar.button("🔍 測試 Proxy 連線", use_container_width=True,
+                         help="從 Streamlit Cloud 直接測試 NAS Proxy 是否可達"):
+        import requests as _req
+        _test_url = "http://www.google.com"
+        _pcfg = get_proxy_config()
+        with st.sidebar:
+            if not _pcfg:
+                st.error("Proxy 未設定，請先填寫 Streamlit Cloud Secrets")
+            else:
+                try:
+                    _r = _req.get(_test_url, proxies=_pcfg, timeout=10)
+                    if _r.status_code == 200:
+                        st.success(f"✅ Proxy 可達！HTTP {_r.status_code}")
+                    elif _r.status_code == 407:
+                        st.error("❌ 407：帳密錯誤，請確認 NAS 認證設定")
+                    else:
+                        st.warning(f"⚠️ HTTP {_r.status_code}：請確認 NAS 存取規則")
+                except _req.exceptions.ProxyError as _e:
+                    st.error(f"❌ ProxyError：NAS 無法連線\n```{str(_e)[:200]}```")
+                except _req.exceptions.ConnectTimeout:
+                    st.error("❌ Timeout：Port 3128 未轉發或 NAS 未啟動")
+                except Exception as _e:
+                    st.error(f"❌ 錯誤：{str(_e)[:200]}")
+
     # ── 強制同步 GitHub 最新邏輯
     if st.sidebar.button("♻️ 強制同步 GitHub 最新邏輯", use_container_width=True,
                          help="清除 cache_data + cache_resource，確保載入 GitHub 最新版本邏輯。"):
