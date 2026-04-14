@@ -27,7 +27,7 @@
 
 | 步驟 | 內容 | 狀態 |
 |------|------|------|
-| Tab-A | app.py 末端新增 `with tab5:` — 總經 14 指標健康燈號表 + API Key 狀態 | ⏳ 暫緩 |
+| Tab-A | app.py 末端新增 `with tab5:` — 總經 14 指標健康燈號表 + API Key 狀態 | ✅ 完成 |
 | Tab-B | app.py 末端 tab5 補充 — 基金診斷擴展欄（NAV/配息/持股/Sharpe 逐基金） | ⏳ 暫緩 |
 | Tab-C | app.py 末端新增 `with tab6:` — 說明書 8 子頁 | ⏳ 暫緩 |
 | Tab-D | AST 驗證 → commit → push | ⏳ 暫緩 |

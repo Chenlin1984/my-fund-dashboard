@@ -1088,3 +1088,154 @@ with tab4:
         st.info("設定完成後按「▶ 執行回測」開始分析。")
     else:
         st.info("請先在上方選取基金，再執行回測。")
+
+# ══════════════════════════════════════════════════════
+# TAB 5 — 資料診斷
+# ══════════════════════════════════════════════════════
+with tab5:
+    _d5_hdr, _d5_btn = st.columns([3, 1])
+    with _d5_hdr:
+        st.markdown("## 🔬 資料診斷")
+        st.caption("確認所有數據來源是否成功下載，方便排查問題")
+    with _d5_btn:
+        st.markdown("<div style='margin-top:20px'></div>", unsafe_allow_html=True)
+        if st.button("🔄 重新載入總經", key="btn_d5_refresh"):
+            st.session_state.macro_done = False
+            st.rerun()
+
+    # ── Section 1: 總經指標健康燈號 ──────────────────────────────
+    st.markdown("### 🌐 總經指標（FRED / yfinance）")
+    _d5_ind = st.session_state.get("indicators", {})
+    _d5_phase = st.session_state.get("phase_info", {})
+
+    _D5_EXPECTED = [
+        ("PMI",          "ISM製造業PMI",        "FRED",     "NAPM",           ">50擴張"),
+        ("CPI",          "CPI年增率",            "FRED",     "CPIAUCSL",       "<2%理想"),
+        ("UNEMPLOYMENT", "失業率",               "FRED",     "UNRATE",         "<4.5%"),
+        ("YIELD_10Y2Y",  "殖利率利差(10Y-2Y)",   "計算",     "DGS10-DGS2",     "倒掛=衰退"),
+        ("YIELD_10Y3M",  "殖利率利差(10Y-3M)",   "計算",     "DGS10-TB3MS",    "最強衰退指標"),
+        ("HY_SPREAD",    "高收益債利差",          "FRED",     "BAMLH0A0HYM2",   "<4%樂觀"),
+        ("M2",           "M2貨幣供給YoY",        "FRED",     "M2SL",           ">5%寬鬆"),
+        ("FED_BS",       "Fed資產負債表YoY",     "FRED",     "WALCL",          "擴表=利多"),
+        ("FED_RATE",     "聯準會利率",           "FRED",     "FEDFUNDS",       "升/降息"),
+        ("PPI",          "PPI生產者物價YoY",     "FRED",     "PPIACO",         "通膨上游"),
+        ("VIX",          "VIX恐慌指數",          "yfinance", "^VIX",           "<18平靜"),
+        ("DXY",          "美元指數",             "yfinance", "DX-Y.NYB",       "月漲跌"),
+        ("ADL",          "市場廣度RSP/SPY",      "yfinance", "RSP/SPY",        "多頭健康度"),
+        ("COPPER",       "銅博士月漲跌",         "yfinance", "HG=F",           "景氣領先"),
+    ]
+
+    _d5_cols_hdr = st.columns([2, 2, 1, 2, 2, 1])
+    for _d5_ch, _d5_hd in zip(_d5_cols_hdr,
+                               ["指標代碼", "中文名稱", "來源", "Ticker/計算式", "數值", "狀態"]):
+        _d5_ch.markdown(
+            f"<div style='font-size:11px;color:#888;font-weight:700'>{_d5_hd}</div>",
+            unsafe_allow_html=True)
+    st.markdown("<hr style='margin:4px 0;border-color:#30363d'>", unsafe_allow_html=True)
+
+    _d5_ok = _d5_fail = _d5_na = 0
+    for _d5_key, _d5_name, _d5_src, _d5_ticker, _d5_note in _D5_EXPECTED:
+        _d5_d   = _d5_ind.get(_d5_key, {})
+        _d5_val = _d5_d.get("value") if _d5_d else None
+        _d5_err = _d5_d.get("error", "") if _d5_d else ""
+        if _d5_val is not None and str(_d5_val) != "" and _d5_val == _d5_val:
+            _d5_ok += 1
+            _d5_ic, _d5_vc = "✅", "#00c853"
+            _d5_unit = _d5_d.get("unit", "") or ""
+            _d5_date = f" ({_d5_d.get('date','')})" if _d5_d.get("date") else ""
+            try:
+                _d5_vstr = f"{float(_d5_val):.2f}{_d5_unit}{_d5_date}"
+            except Exception:
+                _d5_vstr = str(_d5_val)[:14]
+        elif _d5_err:
+            _d5_fail += 1
+            _d5_ic, _d5_vc = "❌", "#f44336"
+            _d5_vstr = str(_d5_err)[:35]
+        elif not _d5_ind:
+            _d5_na += 1
+            _d5_ic, _d5_vc = "⬜", "#555"
+            _d5_vstr = "尚未載入"
+        else:
+            _d5_na += 1
+            _d5_ic, _d5_vc = "⚠️", "#ff9800"
+            _d5_vstr = "⚠️ 無資料"
+
+        _d5_row = st.columns([2, 2, 1, 2, 2, 1])
+        _d5_row[0].markdown(f"<code style='font-size:11px'>{_d5_key}</code>",
+                            unsafe_allow_html=True)
+        _d5_row[1].markdown(f"<span style='font-size:11px;color:#ccc'>{_d5_name}</span>",
+                            unsafe_allow_html=True)
+        _d5_row[2].markdown(f"<span style='font-size:10px;color:#888'>{_d5_src}</span>",
+                            unsafe_allow_html=True)
+        _d5_row[3].markdown(f"<code style='font-size:9px;color:#555'>{_d5_ticker}</code>",
+                            unsafe_allow_html=True)
+        _d5_row[4].markdown(
+            f"<span style='font-size:11px;color:{_d5_vc}'>{_d5_vstr}</span>",
+            unsafe_allow_html=True)
+        _d5_row[5].markdown(
+            f"<span style='font-size:14px'>{_d5_ic}</span>"
+            f"<span style='font-size:9px;color:#555;display:block'>{_d5_note}</span>",
+            unsafe_allow_html=True)
+
+    # 完整率進度條
+    _d5_total = len(_D5_EXPECTED)
+    _d5_pct   = round(_d5_ok / _d5_total * 100) if _d5_total else 0
+    _d5_bar_c = "#00c853" if _d5_pct >= 80 else ("#ff9800" if _d5_pct >= 50 else "#f44336")
+    _d5_upd   = st.session_state.get("macro_last_update")
+    _d5_upd_s = _d5_upd.strftime("%H:%M") if hasattr(_d5_upd, "strftime") else "未更新"
+    st.markdown(
+        f"<div style='background:#1a1f2e;border-radius:8px;padding:10px 14px;margin-top:8px'>"
+        f"<div style='display:flex;justify-content:space-between;font-size:12px;margin-bottom:6px'>"
+        f"<span>"
+        f"<span style='color:#00c853'>✅ 成功 {_d5_ok}</span>　"
+        f"<span style='color:#f44336'>❌ 失敗 {_d5_fail}</span>　"
+        f"<span style='color:#ff9800'>⚠️ 缺漏 {_d5_na}</span>　"
+        f"<span style='color:#888'>/ 共 {_d5_total} 項</span>"
+        f"</span>"
+        f"<span style='color:#888;font-size:11px'>最後更新：{_d5_upd_s}</span>"
+        f"</div>"
+        f"<div style='height:8px;background:#0d1117;border-radius:4px;overflow:hidden'>"
+        f"<div style='height:100%;width:{_d5_pct}%;background:{_d5_bar_c};border-radius:4px'></div>"
+        f"</div>"
+        f"<div style='font-size:10px;color:{_d5_bar_c};margin-top:3px;text-align:right'>"
+        f"資料完整率 {_d5_pct}%</div>"
+        f"</div>", unsafe_allow_html=True)
+
+    if _d5_ind and not _d5_ind.get("PMI"):
+        st.warning("⚠️ **PMI** 暫無資料 — FRED NAPM 系列通常延遲 1-2 個月發布，非抓取錯誤。")
+
+    if _d5_phase:
+        st.markdown(
+            f"<div style='font-size:12px;color:#888;margin-top:6px'>"
+            f"景氣位階：<b style='color:#e6edf3'>{_d5_phase.get('phase','?')}</b>　"
+            f"評分：<b style='color:#e6edf3'>{_d5_phase.get('score','?')}/10</b>　"
+            f"衰退率：<b style='color:#e6edf3'>{_d5_phase.get('rec_prob','?')}%</b>"
+            f"</div>", unsafe_allow_html=True)
+
+    st.divider()
+
+    # ── Section 2: API Key 狀態 ───────────────────────────────────
+    st.markdown("### 🔑 API 金鑰狀態")
+    _d5_k1, _d5_k2 = st.columns(2)
+    with _d5_k1:
+        _d5_fred_ok = bool(FRED_KEY)
+        st.markdown(
+            f"<div style='background:#1a1f2e;border-radius:8px;padding:12px'>"
+            f"<div style='font-size:11px;color:#888'>FRED API Key</div>"
+            f"<div style='font-size:16px;font-weight:700;"
+            f"color:{'#00c853' if _d5_fred_ok else '#f44336'}'>"
+            f"{'✅ 已設定' if _d5_fred_ok else '❌ 未填寫'}</div>"
+            f"<div style='font-size:10px;color:#555'>"
+            f"{'...' + FRED_KEY[-6:] if _d5_fred_ok and len(FRED_KEY) > 6 else '請在 secrets.toml 填入'}"
+            f"</div></div>", unsafe_allow_html=True)
+    with _d5_k2:
+        _d5_gem_ok = bool(GEMINI_KEY)
+        st.markdown(
+            f"<div style='background:#1a1f2e;border-radius:8px;padding:12px'>"
+            f"<div style='font-size:11px;color:#888'>Gemini API Key</div>"
+            f"<div style='font-size:16px;font-weight:700;"
+            f"color:{'#00c853' if _d5_gem_ok else '#f44336'}'>"
+            f"{'✅ 已設定' if _d5_gem_ok else '❌ 未填寫'}</div>"
+            f"<div style='font-size:10px;color:#555'>"
+            f"{'...' + GEMINI_KEY[-6:] if _d5_gem_ok and len(GEMINI_KEY) > 6 else '請在 secrets.toml 填入'}"
+            f"</div></div>", unsafe_allow_html=True)
