@@ -24,6 +24,8 @@ v6.2 修正:
   結構：tcbbankfund.moneydj.com（持股/配置/績效）
 """
 import requests, re, time
+import urllib3
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)  # proxy 模式跳 SSL verify 時抑制警告
 
 # ══════════════════════════════════════════════════════════════════
 # NAS Proxy 設定（讀取 st.secrets，缺失時降級直連）
@@ -61,6 +63,16 @@ def get_proxy_config():
 def _proxies() -> dict:
     """便利函式：回傳 proxies dict（無 Proxy 時為空 dict，不影響直連）"""
     return get_proxy_config() or {}
+
+
+def _ssl_verify() -> bool:
+    """
+    proxy 模式下停用 SSL 驗證：
+    Squid CONNECT 隧道有時無法通過 MoneyDJ SSL 憑證驗證，
+    但流量仍透過我們自己信任的 NAS proxy 走加密通道，安全無虞。
+    直連模式（無 proxy）時仍驗證憑證。
+    """
+    return not bool(get_proxy_config())
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -113,12 +125,13 @@ def fetch_url_with_retry(url, headers=None, params=None,
     }
     if headers:
         _headers.update(headers)
-    _proxy = _proxies()
+    _proxy  = _proxies()
+    _verify = _ssl_verify()   # proxy 模式跳過 SSL 憑證驗證（Squid CONNECT 相容）
     for attempt in range(retries):
         try:
             resp = requests.get(url, headers=_headers,
                                 params=params, timeout=timeout,
-                                proxies=_proxy)
+                                proxies=_proxy, verify=_verify)
             # 407 Proxy Auth 失敗 → 立即回報，不重試
             if resp.status_code == 407:
                 print(f"[proxy] 407 Proxy Auth Failed — 請確認 st.secrets[proxy] 帳密正確")
@@ -981,7 +994,7 @@ def _cnyes_resolve_code(moneydj_code: str) -> list:
         try:
             url = (f"https://fund.api.cnyes.com/fund/api/v2/funds/search"
                    f"?key={_uquote(key)}&limit={limit}")
-            r = requests.get(url, headers=_hdrs, timeout=10, proxies=_proxies())
+            r = requests.get(url, headers=_hdrs, timeout=10, proxies=_proxies(), verify=_ssl_verify())
             if r.status_code == 200:
                 data = r.json()
                 items = (data.get("data", {}).get("list")
@@ -1046,7 +1059,7 @@ def fetch_nav_cnyes(code: str) -> pd.Series:
         _url = (f"https://fund.api.cnyes.com/fund/api/v2/funds/{_cand}"
                 f"/nav?start={start_ms}&end={end_ms}")
         try:
-            r = requests.get(_url, headers=_hdrs, timeout=15, proxies=_proxies())
+            r = requests.get(_url, headers=_hdrs, timeout=15, proxies=_proxies(), verify=_ssl_verify())
             if r.status_code != 200:
                 continue
             data = r.json()
@@ -1078,7 +1091,7 @@ def fetch_div_cnyes(code: str) -> list:
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
             "Accept": "application/json",
             "Referer": "https://fund.cnyes.com/",
-        }, timeout=15, proxies=_proxies())
+        }, timeout=15, proxies=_proxies(), verify=_ssl_verify())
         if r.status_code == 200:
             data = r.json()
             items = (data.get("data") or data.get("items") or [])
@@ -3565,7 +3578,7 @@ def search_fundclear(keyword: str) -> list:
         }
         r = requests.post(
             "https://www.fundclear.com.tw/api/offshore/fund-info/fund-search/query",
-            json=body, headers=HDR_JSON, timeout=20, proxies=_proxies()
+            json=body, headers=HDR_JSON, timeout=20, proxies=_proxies(), verify=_ssl_verify()
         )
         print(f"[fundclear] status={r.status_code}")
         if r.status_code == 200:
@@ -3607,7 +3620,7 @@ def search_moneydj_by_name(keyword: str) -> list:
         ("chubb",   "https://chubb.moneydj.com/fund-page.html?sUrl=$W$HTML$SELECT]DJHTM"),
     ]:
         try:
-            r = requests.get(url, headers=HDR, timeout=20, proxies=_proxies())
+            r = requests.get(url, headers=HDR, timeout=20, proxies=_proxies(), verify=_ssl_verify())
             if r.status_code != 200: continue
             # v13.3: 同時支援 TLZF9 / ACTI98（無 dash）和 ABC-XYZ123（有 dash）
             for val, text in re.findall(
@@ -3629,7 +3642,7 @@ def search_moneydj_by_name(keyword: str) -> list:
     if not results:
         try:
             url = f"https://www.moneydj.com/funddjx/fundsearch.xdjhtm?keyword={requests.utils.quote(kw)}"
-            r = requests.get(url, headers=HDR, timeout=15, proxies=_proxies())
+            r = requests.get(url, headers=HDR, timeout=15, proxies=_proxies(), verify=_ssl_verify())
             if r.status_code == 200:
                 soup = BeautifulSoup(r.text, "lxml")
                 for tbl in soup.find_all("table"):
@@ -3700,7 +3713,7 @@ def fetch_nav(full_key: str, portal: str = "") -> pd.Series:
         ]
     for url in urls:
         try:
-            r = requests.get(url, headers=HDR, timeout=25, proxies=_proxies())
+            r = requests.get(url, headers=HDR, timeout=25, proxies=_proxies(), verify=_ssl_verify())
             print(f"[fetch_nav] {url[:65]} → {r.status_code}")
             if r.status_code != 200: continue
             s = _parse_nav_html(r.text)
@@ -3732,7 +3745,7 @@ def fetch_div(full_key: str, portal: str = "") -> list:
         ]
     for url in urls:
         try:
-            r = requests.get(url, headers=HDR, timeout=20, proxies=_proxies())
+            r = requests.get(url, headers=HDR, timeout=20, proxies=_proxies(), verify=_ssl_verify())
             if r.status_code != 200: continue
             soup = BeautifulSoup(r.text, "lxml")
             for tbl in soup.find_all("table"):
@@ -4372,7 +4385,6 @@ def calc_metrics(s: pd.Series, divs: list, risk_override: dict = None) -> dict:
 # ════════════════════════════════════════════════════════════
 # 主入口：full_key → 淨值 + 配息 + MK
 # ════════════════════════════════════════════════════════════
-@st.cache_data(ttl=1800, show_spinner=False)
 def fetch_fund_by_key(full_key: str, fund_name: str = "",
                       portal: str = "", source: str = "",
                       manual_nav_csv: str = "") -> dict:
@@ -4413,7 +4425,6 @@ def fetch_fund_by_key(full_key: str, fund_name: str = "",
 
 
 # 保留相容性（舊 main.py 呼叫）
-@st.cache_data(ttl=1800, show_spinner=False)
 def fetch_fund_by_code(insurance_code: str, gemini_key: str = "",
                        manual_full_key: str = "",
                        manual_nav_csv: str = "") -> dict:
@@ -4500,7 +4511,7 @@ def fetch_fund_structure(full_key: str, portal: str = "") -> dict:
         for base in bases:
             url = base.rstrip("/") + path
             try:
-                r = requests.get(url, headers=HDR, timeout=20, proxies=_proxies())
+                r = requests.get(url, headers=HDR, timeout=20, proxies=_proxies(), verify=_ssl_verify())
                 if r.status_code != 200:
                     continue
                 if len(r.text) < 500:
@@ -4615,107 +4626,6 @@ def calc_dividend_estimate(nav, invest_amount, monthly_div, annual_div,
         monthly_twd=round(units*monthly_div*rate,0),
         annual_twd=round(units*annual_div*rate,0),
     )
-
-# ════════════════════════════════════════════════════════════
-# Bug2 & Bug3: ETF 折溢價 + VCP 訊號（yfinance，僅適用 ETF）
-# ════════════════════════════════════════════════════════════
-
-@st.cache_data(ttl=300, show_spinner=False)
-def fetch_etf_market_price(ticker: str) -> dict:
-    """
-    取得 ETF 即時市價，計算折溢價率。
-    僅適用有上市交易的 ETF（如 0050.TW），共同基金請勿使用。
-    回傳: {"market_price": float, "premium_pct": float, "error": str|None}
-    折溢價率 = (市價 - NAV) / NAV × 100%
-    """
-    try:
-        import yfinance as yf
-        tk = yf.Ticker(ticker)
-        hist = tk.history(period="2d", auto_adjust=True)
-        if hist.empty or len(hist) == 0:
-            return {"market_price": None, "premium_pct": None, "error": "yfinance 無法取得市價資料"}
-        market_price = round(float(hist["Close"].iloc[-1]), 4)
-        return {"market_price": market_price, "premium_pct": None, "error": None}
-    except ImportError:
-        return {"market_price": None, "premium_pct": None, "error": "yfinance 未安裝，請執行 pip install yfinance"}
-    except Exception as e:
-        return {"market_price": None, "premium_pct": None, "error": f"市價查詢失敗：{str(e)[:80]}"}
-
-
-@st.cache_data(ttl=3600, show_spinner=False)
-def calc_vcp_signal(ticker: str) -> dict:
-    """
-    計算春哥（Stan Weinstein）VCP 波幅收縮訊號。
-    僅適用有上市交易的 ETF（yfinance 日線數據），共同基金請勿使用。
-    VCP 買進條件（三者同時滿足）：
-      1. 收盤 > MA50 AND 收盤 > MA200
-      2. 近 5 週波幅依序遞減，且最後一週 < 前一週 × 0.6（至少需 3 週數據）
-      3. 當日成交量 > 50 日均量
-    回傳: {"signal": bool, "stop_loss": float|None, "ma50": float, "ma200": float|None,
-            "now": float, "weekly_ranges": list, "volume_ok": bool, "reason": str, "error": str|None}
-    """
-    try:
-        import yfinance as yf
-        tk = yf.Ticker(ticker)
-        df = tk.history(period="1y", auto_adjust=True)
-        if df.empty or len(df) < 60:
-            return {"signal": False, "error": "歷史資料不足 60 日", "reason": "資料不足，無法計算 VCP"}
-
-        close  = df["Close"]
-        volume = df["Volume"]
-        now    = round(float(close.iloc[-1]), 4)
-
-        # 1. 均線位置
-        ma50  = round(float(close.rolling(50).mean().iloc[-1]), 4)
-        ma200 = round(float(close.rolling(200).mean().iloc[-1]), 4) if len(df) >= 200 else None
-        ma50_ok  = now > ma50
-        ma200_ok = (now > ma200) if (ma200 is not None) else True  # 不足 200 日略過此條件
-
-        # 2. 近 5 週波幅收縮
-        df_copy = df.copy()
-        df_copy.index = pd.to_datetime(df_copy.index)
-        weekly = df_copy.resample("W").agg({"High": "max", "Low": "min"})
-        weekly = weekly.dropna()
-        weekly["range_pct"] = (weekly["High"] - weekly["Low"]) / weekly["Low"] * 100
-        last5 = weekly["range_pct"].tail(5).tolist()
-
-        vcp_ok = False
-        if len(last5) >= 3:
-            # 每週波幅需單調遞減，且最後一週幅度 < 前一週 × 0.6
-            is_decreasing = all(last5[i] >= last5[i+1] for i in range(len(last5)-1))
-            is_contracted  = last5[-1] < last5[-2] * 0.6 if len(last5) >= 2 else False
-            vcp_ok = is_decreasing and is_contracted
-
-        # 3. 成交量確認
-        vol_ma50  = float(volume.rolling(50).mean().iloc[-1])
-        today_vol = float(volume.iloc[-1])
-        volume_ok = today_vol > vol_ma50 if vol_ma50 > 0 else False
-
-        signal    = ma50_ok and ma200_ok and vcp_ok and volume_ok
-        stop_loss = round(now * 0.92, 4) if signal else None
-
-        reasons = []
-        if not ma50_ok:   reasons.append(f"收盤 {now} < MA50 {ma50}")
-        if not ma200_ok:  reasons.append(f"收盤 {now} < MA200 {ma200}")
-        if not vcp_ok:    reasons.append("週波幅未呈收縮型態（需單調遞減且末週幅度縮小 40%+）")
-        if not volume_ok: reasons.append(f"今日量 {int(today_vol):,} < 50日均量 {int(vol_ma50):,}")
-
-        return {
-            "signal":        signal,
-            "stop_loss":     stop_loss,
-            "ma50":          ma50,
-            "ma200":         ma200,
-            "now":           now,
-            "weekly_ranges": [round(r, 1) for r in last5],
-            "volume_ok":     volume_ok,
-            "reason":        "✅ VCP 突破條件全數滿足，8% 停損保護" if signal else "；".join(reasons) or "條件未滿足",
-            "error":         None
-        }
-    except ImportError:
-        return {"signal": False, "error": "yfinance 未安裝，請執行 pip install yfinance", "reason": "套件缺失"}
-    except Exception as e:
-        return {"signal": False, "error": f"VCP 計算失敗：{str(e)[:100]}", "reason": "計算異常"}
-
 
 # ════════════════════════════════════════════════════════════
 # 國際財經新聞抓取（RSS 多源整合）
