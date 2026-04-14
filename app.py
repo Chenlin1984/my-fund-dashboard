@@ -269,7 +269,7 @@ with st.sidebar:
         import requests as _req
         # 直接測試 MoneyDJ（真正目標），timeout 拉長至 25s
         _test_targets = [
-            ("MoneyDJ", "https://www.moneydj.com/"),
+            ("MoneyDJ", "http://www.moneydj.com/"),          # 實際爬蟲用 HTTP
             ("TDCC",    "https://openapi.tdcc.com.tw/"),
         ]
         _pcfg = get_proxy_config()
