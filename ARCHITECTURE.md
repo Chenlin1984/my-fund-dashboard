@@ -350,3 +350,95 @@ Streamlit 啟動
         ↑ 寫入               ↓ 讀取
   Tab1/Tab2/Tab3        Tab4/Tab5/AI 分析
 ```
+
+---
+
+## §6 Session State Schema
+
+| Key | 型別 | 預設值 | 寫入方 | 讀取方 |
+|-----|------|--------|--------|--------|
+| `macro_done` | `bool` | `False` | Tab1 載入後設 `True` | Tab1 防重複呼叫 |
+| `indicators` | `dict[str, dict]` | `{}` | Tab1 `fetch_all_indicators` | Tab2/Tab3/Tab5/AI |
+| `phase_info` | `dict` | `{}` | Tab1 `calc_macro_phase` | Tab2/Tab3/AI |
+| `macro_last_update` | `datetime\|None` | `None` | Tab1 完成時 | Sidebar 顯示時間 |
+| `macro_ai` | `str` | `""` | Tab1 AI 按鈕 | Tab1 渲染 Markdown |
+| `prev_phase` | `str` | `""` | Tab1 | Tab1 位階變化偵測 |
+| `phase_history` | `list[str]` | `[]` | Tab1 | Tab1 歷史記錄 |
+| `current_fund` | `dict\|None` | `None` | Tab2 基金載入 | Tab2 渲染 / Tab5 診斷 |
+| `fund_data` | `dict\|None` | `None` | Tab2（備用） | Tab2 |
+| `tdcc_results` | `list[dict]` | `[]` | Tab2 TDCC 搜尋 | Tab2 選單 |
+| `mj_fund_data` | `dict\|None` | `None` | Tab2 MoneyDJ 搜尋 | Tab2 |
+| `portfolio_funds` | `list[dict]` | `[]` | Tab3 加入基金 | Tab3 渲染 / Tab5 診斷 |
+| `portfolio_core_pct` | `int` | `75` | Tab3 滑桿 | Tab3 再平衡計算 |
+| `news_items` | `list[dict]` | `[]` | Tab1 RSS | Tab1 / `detect_systemic_risk` |
+| `systemic_risk_data` | `dict\|None` | `None` | Tab1 風險掃描 | Tab1 警示卡 |
+
+**`portfolio_funds` 每筆元素結構：**
+```
+{
+  code:       str,     # 基金代碼
+  name:       str,     # 基金名稱
+  full_key:   str,     # portal:code
+  is_core:    bool,    # True=核心, False=衛星
+  currency:   str,     # "USD"|"TWD"
+  invest_amt: float,   # 投入金額（NTD）
+  weight:     float,   # 目標權重 0~1
+  loaded:     bool,    # 是否已抓取資料
+  metrics:    dict,    # calc_metrics() 結果
+  moneydj_raw:dict,    # fetch_fund_from_moneydj_url() 結果
+  dividends:  list,    # 配息記錄
+  series:     pd.Series|None,
+  error:      str|None,
+}
+```
+
+---
+
+## §7 外部服務依賴
+
+### 7.1 API 服務
+
+| 服務 | 用途 | Key 位置 | 免費限制 |
+|------|------|---------|---------|
+| **FRED API** | 14 項總經指標 | `secrets.toml: FRED_API_KEY` | 120 req/min |
+| **Gemini API** | AI 分析文字生成 | `secrets.toml: GEMINI_API_KEY` | 免費 tier 有 RPM 限制 |
+| **NAS Proxy** | 穿透抓取 MoneyDJ/TDCC | `secrets.toml: PROXY_URL` | 自建，無限制 |
+
+### 7.2 資料來源（爬取，免 Token）
+
+| 來源 | 資料類型 | 須 Proxy |
+|------|---------|---------|
+| MoneyDJ wb01/wb05/wb07 | 含息報酬率 / 配息率 / 風險評比 | ✅ |
+| MoneyDJ NAV 頁 | 每日淨值歷史 | ✅ |
+| TDCC openapi | 境外基金搜尋 / 代理機構 | ✅ |
+| yfinance | VIX / DXY / ADL / COPPER / 美股 | ❌ |
+| Fundclear | 境內基金 NAV / 配息 | ❌ |
+| cnyes 鉅亨 | 備援 NAV / 配息 | ❌ |
+| Morningstar | 備援 NAV / 元數據 | ❌ |
+| RSS（Reuters/Bloomberg/WSJ）| 財經新聞標題 | ❌ |
+
+### 7.3 Python 套件（requirements.txt）
+
+| 套件 | 版本約束 | 用途 |
+|------|---------|------|
+| `streamlit` | ==1.45.1 | UI 框架 |
+| `pandas` | >=2.0.0 | 資料處理 |
+| `numpy` | >=1.24.0 | 數值運算 |
+| `plotly` | >=5.18.0 | 互動圖表 |
+| `yfinance` | >=0.2.36 | 美股行情 |
+| `google-generativeai` | >=0.5.0 | Gemini API |
+| `requests` | >=2.31.0 | HTTP 爬取 |
+| `beautifulsoup4` | >=4.12.0 | HTML 解析 |
+| `lxml` / `html5lib` | >=4.9 / >=1.1 | BS4 解析器 |
+| `feedparser` | >=6.0.8 | RSS 解析 |
+| `scipy` | >=1.11.0 | 投資組合最佳化（SLSQP）|
+| `nest-asyncio` | >=1.6.0 | Colab 環境 asyncio 兼容 |
+
+### 7.4 Streamlit Secrets 必填欄位
+
+```toml
+# .streamlit/secrets.toml
+FRED_API_KEY   = "..."   # 必填，否則總經指標全部失敗
+GEMINI_API_KEY = "..."   # 必填，否則 AI 分析無法使用
+PROXY_URL      = "http://user:pass@host:port"  # 必填，否則 MoneyDJ 資料無法抓取
+```

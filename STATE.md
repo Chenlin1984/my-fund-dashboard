@@ -15,7 +15,7 @@
 | Arch-2 | ARCHITECTURE.md §3 資料流向圖（使用者操作 → Session State → 各模組呼叫鏈） | ✅ 完成 |
 | Arch-3 | ARCHITECTURE.md §4 核心函式 I/O 定義（macro_engine + fund_fetcher 主要函式） | ✅ 完成 |
 | Arch-4 | ARCHITECTURE.md §5 核心函式 I/O 定義（ai_engine + portfolio_engine + backtest_engine） | ✅ 完成 |
-| Arch-5 | ARCHITECTURE.md §6 Session State schema + §7 部署與外部依賴表，commit & push | ⏳ 待執行 |
+| Arch-5 | ARCHITECTURE.md §6 Session State schema + §7 部署與外部依賴表，commit & push | ✅ 完成 |
 
 ## 📐 ARCHITECTURE.md 規範
 - **純規格書**：不含任何實作程式碼
