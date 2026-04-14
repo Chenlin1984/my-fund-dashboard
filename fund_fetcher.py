@@ -24,6 +24,8 @@ v6.2 修正:
   結構：tcbbankfund.moneydj.com（持股/配置/績效）
 """
 import requests, re, time
+import urllib3
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)  # proxy 模式跳 SSL verify 時抑制警告
 
 # ══════════════════════════════════════════════════════════════════
 # NAS Proxy 設定（讀取 st.secrets，缺失時降級直連）
@@ -61,6 +63,16 @@ def get_proxy_config():
 def _proxies() -> dict:
     """便利函式：回傳 proxies dict（無 Proxy 時為空 dict，不影響直連）"""
     return get_proxy_config() or {}
+
+
+def _ssl_verify() -> bool:
+    """
+    proxy 模式下停用 SSL 驗證：
+    Squid CONNECT 隧道有時無法通過 MoneyDJ SSL 憑證驗證，
+    但流量仍透過我們自己信任的 NAS proxy 走加密通道，安全無虞。
+    直連模式（無 proxy）時仍驗證憑證。
+    """
+    return not bool(get_proxy_config())
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -113,12 +125,13 @@ def fetch_url_with_retry(url, headers=None, params=None,
     }
     if headers:
         _headers.update(headers)
-    _proxy = _proxies()
+    _proxy  = _proxies()
+    _verify = _ssl_verify()   # proxy 模式跳過 SSL 憑證驗證（Squid CONNECT 相容）
     for attempt in range(retries):
         try:
             resp = requests.get(url, headers=_headers,
                                 params=params, timeout=timeout,
-                                proxies=_proxy)
+                                proxies=_proxy, verify=_verify)
             # 407 Proxy Auth 失敗 → 立即回報，不重試
             if resp.status_code == 407:
                 print(f"[proxy] 407 Proxy Auth Failed — 請確認 st.secrets[proxy] 帳密正確")
@@ -981,7 +994,7 @@ def _cnyes_resolve_code(moneydj_code: str) -> list:
         try:
             url = (f"https://fund.api.cnyes.com/fund/api/v2/funds/search"
                    f"?key={_uquote(key)}&limit={limit}")
-            r = requests.get(url, headers=_hdrs, timeout=10, proxies=_proxies())
+            r = requests.get(url, headers=_hdrs, timeout=10, proxies=_proxies(), verify=_ssl_verify())
             if r.status_code == 200:
                 data = r.json()
                 items = (data.get("data", {}).get("list")
@@ -1046,7 +1059,7 @@ def fetch_nav_cnyes(code: str) -> pd.Series:
         _url = (f"https://fund.api.cnyes.com/fund/api/v2/funds/{_cand}"
                 f"/nav?start={start_ms}&end={end_ms}")
         try:
-            r = requests.get(_url, headers=_hdrs, timeout=15, proxies=_proxies())
+            r = requests.get(_url, headers=_hdrs, timeout=15, proxies=_proxies(), verify=_ssl_verify())
             if r.status_code != 200:
                 continue
             data = r.json()
@@ -1078,7 +1091,7 @@ def fetch_div_cnyes(code: str) -> list:
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
             "Accept": "application/json",
             "Referer": "https://fund.cnyes.com/",
-        }, timeout=15, proxies=_proxies())
+        }, timeout=15, proxies=_proxies(), verify=_ssl_verify())
         if r.status_code == 200:
             data = r.json()
             items = (data.get("data") or data.get("items") or [])
@@ -3565,7 +3578,7 @@ def search_fundclear(keyword: str) -> list:
         }
         r = requests.post(
             "https://www.fundclear.com.tw/api/offshore/fund-info/fund-search/query",
-            json=body, headers=HDR_JSON, timeout=20, proxies=_proxies()
+            json=body, headers=HDR_JSON, timeout=20, proxies=_proxies(), verify=_ssl_verify()
         )
         print(f"[fundclear] status={r.status_code}")
         if r.status_code == 200:
@@ -3607,7 +3620,7 @@ def search_moneydj_by_name(keyword: str) -> list:
         ("chubb",   "https://chubb.moneydj.com/fund-page.html?sUrl=$W$HTML$SELECT]DJHTM"),
     ]:
         try:
-            r = requests.get(url, headers=HDR, timeout=20, proxies=_proxies())
+            r = requests.get(url, headers=HDR, timeout=20, proxies=_proxies(), verify=_ssl_verify())
             if r.status_code != 200: continue
             # v13.3: 同時支援 TLZF9 / ACTI98（無 dash）和 ABC-XYZ123（有 dash）
             for val, text in re.findall(
@@ -3629,7 +3642,7 @@ def search_moneydj_by_name(keyword: str) -> list:
     if not results:
         try:
             url = f"https://www.moneydj.com/funddjx/fundsearch.xdjhtm?keyword={requests.utils.quote(kw)}"
-            r = requests.get(url, headers=HDR, timeout=15, proxies=_proxies())
+            r = requests.get(url, headers=HDR, timeout=15, proxies=_proxies(), verify=_ssl_verify())
             if r.status_code == 200:
                 soup = BeautifulSoup(r.text, "lxml")
                 for tbl in soup.find_all("table"):
@@ -3700,7 +3713,7 @@ def fetch_nav(full_key: str, portal: str = "") -> pd.Series:
         ]
     for url in urls:
         try:
-            r = requests.get(url, headers=HDR, timeout=25, proxies=_proxies())
+            r = requests.get(url, headers=HDR, timeout=25, proxies=_proxies(), verify=_ssl_verify())
             print(f"[fetch_nav] {url[:65]} → {r.status_code}")
             if r.status_code != 200: continue
             s = _parse_nav_html(r.text)
@@ -3732,7 +3745,7 @@ def fetch_div(full_key: str, portal: str = "") -> list:
         ]
     for url in urls:
         try:
-            r = requests.get(url, headers=HDR, timeout=20, proxies=_proxies())
+            r = requests.get(url, headers=HDR, timeout=20, proxies=_proxies(), verify=_ssl_verify())
             if r.status_code != 200: continue
             soup = BeautifulSoup(r.text, "lxml")
             for tbl in soup.find_all("table"):
@@ -4500,7 +4513,7 @@ def fetch_fund_structure(full_key: str, portal: str = "") -> dict:
         for base in bases:
             url = base.rstrip("/") + path
             try:
-                r = requests.get(url, headers=HDR, timeout=20, proxies=_proxies())
+                r = requests.get(url, headers=HDR, timeout=20, proxies=_proxies(), verify=_ssl_verify())
                 if r.status_code != 200:
                     continue
                 if len(r.text) < 500:
