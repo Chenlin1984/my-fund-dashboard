@@ -361,3 +361,139 @@ def _write_error_ledger(error, context, api_key=""):
             _f.write(_entry)
     except Exception:
         pass
+
+
+# ══════════════════════════════════════════════════════════════════
+# v18.1 三節結構化總經 AI 摘要
+# 依需求輸出：【現狀解讀】【潛在系統性風險評估】【未來一週觀察重點】
+# ══════════════════════════════════════════════════════════════════
+def analyze_macro_structured(
+    api_key: str,
+    indicators: dict,
+    phase_info: dict,
+    news_items: list = None,
+    systemic_risk: dict = None,
+    max_tokens: int = 2000,
+) -> str:
+    """
+    三節結構化總經 AI 摘要（v18.1）
+
+    MetaPrompt 設計思維：
+    1. 強制 3 節標題結構，避免 LLM 自由發揮格式
+    2. 數字上下文先行（量化 snapshot < 600 tokens）
+    3. 禁止幻覺：不允許引用快照以外的資訊
+    4. 輸出語言：繁體中文，適合台灣投資人
+    5. 系統性風險節要求：必須評級 LOW / MEDIUM / HIGH 並給出具體觸發條件
+    """
+    if not api_key:
+        return "⚠️ 未設定 GEMINI_API_KEY，AI 摘要功能關閉"
+
+    pi  = phase_info or {}
+    ind = indicators or {}
+
+    # ── 量化數據快照（精簡版，< 500 tokens）──────────────────
+    KEY_FIELDS = [
+        ("PMI",          "ISM PMI"),
+        ("YIELD_10Y2Y",  "10Y-2Y 利差"),
+        ("YIELD_10Y3M",  "10Y-3M 利差"),
+        ("HY_SPREAD",    "HY 信用利差"),
+        ("VIX",          "VIX"),
+        ("CPI",          "CPI YoY"),
+        ("FED_RATE",     "Fed Rate"),
+        ("M2",           "M2 YoY"),
+        ("UNEMPLOYMENT", "失業率"),
+        ("JOBLESS",      "初領失業金(萬)"),
+        ("CONSUMER_CONF","密大信心"),
+        ("DXY",          "美元指數"),
+        ("COPPER",       "銅博士 MoM"),
+        ("ADL",          "市場廣度 RSP/SPY"),
+    ]
+    ind_lines = []
+    for key, label in KEY_FIELDS:
+        v = ind.get(key, {})
+        if not v:
+            continue
+        val  = v.get("value")
+        prev = v.get("prev")
+        sig  = v.get("signal", "")
+        unit = v.get("unit", "")
+        if val is None:
+            continue
+        val_str  = f"{val:.2f}{unit}" if isinstance(val, float) else str(val)
+        prev_str = f"（前：{prev:.2f}{unit}）" if isinstance(prev, (int, float)) else ""
+        ind_lines.append(f"  {label}: {val_str}{prev_str} {sig}")
+
+    # 殖利率利差公式說明（供 LLM 理解）
+    # 利差 = 10年期美債殖利率 - 2年期美債殖利率
+    # 公式：Spread = R(10Y) - R(2Y)；倒掛 < 0 = 歷史衰退前兆
+
+    # ── 新聞標題（最多 5 則，含風險評分）───────────────────
+    news_section = ""
+    if news_items:
+        titles = [item.get("title","")[:70] for item in news_items[:5] if item.get("title")]
+        if titles:
+            news_section = "\n[近期財經新聞標題（最多5則）]\n" + "\n".join(f"• {t}" for t in titles)
+
+    # ── 系統性風險偵測結果 ─────────────────────────────────
+    risk_section = ""
+    if systemic_risk:
+        rl    = systemic_risk.get("risk_level", "LOW")
+        rs    = systemic_risk.get("risk_score", 0)
+        kws   = [t["keyword"] for t in systemic_risk.get("triggered", [])[:5]]
+        risk_section = (
+            f"\n[新聞系統性風險偵測]\n"
+            f"  評級: {rl}（加權分數: {rs}）\n"
+            + (f"  命中關鍵字: {', '.join(kws)}\n" if kws else "")
+        )
+
+    # ── 景氣位階摘要 ──────────────────────────────────────
+    alloc     = pi.get("allocation", {})
+    alloc_str = " / ".join(f"{k}{v}%" for k, v in alloc.items()) if alloc else "未知"
+    phase     = pi.get("phase", "未知")
+    score     = pi.get("score", "?")
+    rec_prob  = pi.get("rec_prob")
+    alerts    = pi.get("alerts", [])
+
+    snapshot = f"""
+【量化數據快照 — AI 只能依據此快照分析，嚴禁引用外部資訊】
+
+[景氣位階]
+  當前位階: {phase}（評分 {score}/10）
+  建議配置: {alloc_str}
+  衰退機率: {rec_prob if rec_prob is not None else 'N/A'}%
+  風險警報: {' | '.join(alerts[:3]) if alerts else '無'}
+
+[量化指標]
+{chr(10).join(ind_lines) or '（無資料）'}
+{news_section}
+{risk_section}
+""".strip()
+
+    # ── 三節結構 Prompt（MetaPrompt）─────────────────────
+    prompt = f"""你是一位精通景氣循環、MK 以息養股方法論的台灣財經分析師。
+⚠️ 嚴格規則：只能根據以下快照分析，禁止搜尋或引用任何外部資訊，禁止杜撰數字。
+
+{snapshot}
+
+═══════════════════════════════════════════
+請用繁體中文輸出以下【完整三節】，必須依序且每節使用 ### 開頭標題：
+
+### 📍 一、現狀解讀
+- 以 2-3 句話總結當前景氣位階的核心特徵
+- 必須引用快照中的至少 3 個指標數值（含單位）
+- 說明目前處於景氣循環的哪個象限（復甦/擴張/高峰/衰退），以及與歷史的相比意義
+- 殖利率利差（計算式：10Y利率 - 2Y利率）當前讀數代表什麼訊號？
+
+### 🔴 二、潛在系統性風險評估
+- 整合新聞面偵測結果，給出本次評級：LOW / MEDIUM / HIGH，並說明理由
+- 列出 2-3 個最需關注的具體風險觸發條件（例：若 VIX 突破 X 或 HY 利差擴大至 Y%）
+- 若新聞無高危信號，應明確說明「新聞面暫無系統性警示」並解釋量化面為何支撐此結論
+
+### 🔭 三、未來一週觀察重點
+- 列出 3-5 個本週需要追蹤的具體數據/事件（含預期發布時間或觸發條件）
+- 每個觀察點需說明：若數據好於預期→如何操作；若差於預期→如何因應
+- 結尾給出一句「本週核心操作原則」
+═══════════════════════════════════════════
+【必須輸出完整三節，不可提前結束，每節至少 3 個具體要點】"""
+
+    return _gemini(api_key, prompt, max_tokens=max_tokens)

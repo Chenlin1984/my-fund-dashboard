@@ -1042,3 +1042,117 @@ def fetch_tw_market_tpi(fred_api_key: str = "") -> dict:
                       advice="散戶絕望期，偵測到底部特徵，準備分批建倉")
 
     return result
+
+
+# ══════════════════════════════════════════════════════════════════
+# v18.1 新聞系統性風險偵測（關鍵字加權評分）
+# ══════════════════════════════════════════════════════════════════
+_RISK_KEYWORDS = {
+    # ── 流動性危機（最高風險）
+    "default":       4, "debt crisis":   4, "bank run":       4,
+    "bankruptcy":    4, "contagion":      4, "lehman":         4,
+    "systemic":      3, "liquidity":      3, "credit crunch":  3,
+    "違約":          4, "崩盤":           4, "擠兌":           4,
+    "金融危機":      4, "系統性風險":     4, "破產":           3,
+    # ── 衰退 / 停滯
+    "recession":     3, "stagflation":    3, "depression":     3,
+    "slowdown":      2, "contraction":    2, "gdp decline":    2,
+    "衰退":          3, "滯脹":           3, "蕭條":           3,
+    "負成長":        2, "景氣惡化":       2,
+    # ── 央行緊急行動
+    "emergency cut": 3, "rate hike":      2, "tightening":     2,
+    "暴力升息":      3, "緊急降息":       3, "意外升息":       3,
+    # ── 地緣政治 / 貿易
+    "war":           2, "sanction":       2, "tariff":         2,
+    "trade war":     2, "escalation":     2,
+    "戰爭":          2, "制裁":           2, "關稅":           2,
+    "脫鉤":          2, "升級":           1,
+}
+
+def detect_systemic_risk(news_items: list) -> dict:
+    """
+    對新聞列表做關鍵字加權掃描，回傳系統性風險評估。
+
+    回傳格式：
+    {
+      "risk_level":  "HIGH" | "MEDIUM" | "LOW",
+      "risk_score":  int,
+      "risk_color":  str (hex),
+      "risk_icon":   str,
+      "triggered":   [{"keyword": str, "count": int, "weight": int, "sub_score": int}],
+      "headlines":   [str],  ← 命中關鍵字的新聞標題
+      "advice":      str,
+    }
+    算法：
+      sub_score_i = keyword_weight_i × hit_count_i
+      total_score = Σ sub_score_i
+      HIGH   : score ≥ 10（多重高危信號，建議立即降低風險暴露）
+      MEDIUM : score ≥ 5 （警示狀態，密切追蹤）
+      LOW    : score <  5 （暫無系統性異常）
+    """
+    import re as _re
+
+    all_text   = []
+    title_map  = {}   # keyword → list of matching titles
+
+    for item in (news_items or []):
+        title   = str(item.get("title",   ""))
+        summary = str(item.get("summary", ""))
+        combined = (title + " " + summary).lower()
+        all_text.append(combined)
+        # 建立 keyword → title 映射（供展示用）
+        for kw in _RISK_KEYWORDS:
+            if kw in combined:
+                title_map.setdefault(kw, []).append(title[:80])
+
+    full_corpus = " ".join(all_text)
+    triggered   = []
+    total_score = 0
+
+    for kw, weight in sorted(_RISK_KEYWORDS.items(), key=lambda x: -x[1]):
+        # 使用 word boundary 避免誤判（e.g. "war" in "forward"）
+        count = len(_re.findall(r'\b' + _re.escape(kw) + r'\b', full_corpus))
+        if count > 0:
+            sub = weight * min(count, 3)   # 同一關鍵字最多計 3 次，避免單篇洗版
+            total_score += sub
+            triggered.append({
+                "keyword":   kw,
+                "count":     count,
+                "weight":    weight,
+                "sub_score": sub,
+            })
+
+    # 命中關鍵字對應的標題（最多 5 則）
+    hit_titles = []
+    for kw in [t["keyword"] for t in triggered[:5]]:
+        for title in title_map.get(kw, []):
+            if title not in hit_titles:
+                hit_titles.append(title)
+    hit_titles = hit_titles[:5]
+
+    # 風險等級判定
+    if total_score >= 10:
+        level  = "HIGH"
+        color  = "#f44336"
+        icon   = "🚨"
+        advice = "偵測到多重高危信號，建議立即提高現金比重，核心部位 ≥80%，衛星部位設停損"
+    elif total_score >= 5:
+        level  = "MEDIUM"
+        color  = "#ff9800"
+        icon   = "⚠️"
+        advice = "市場存在潛在壓力訊號，密切追蹤 VIX 與 HY 利差，衛星部位設停利"
+    else:
+        level  = "LOW"
+        color  = "#00c853"
+        icon   = "✅"
+        advice = "新聞面暫無系統性異常，維持既有配置策略"
+
+    return {
+        "risk_level":  level,
+        "risk_score":  total_score,
+        "risk_color":  color,
+        "risk_icon":   icon,
+        "triggered":   triggered[:10],
+        "headlines":   hit_titles,
+        "advice":      advice,
+    }

@@ -13,15 +13,16 @@ TW_TZ = datetime.timezone(datetime.timedelta(hours=8))
 def _now_tw():
     return datetime.datetime.now(TW_TZ)
 
-from macro_engine  import fetch_all_indicators, calc_macro_phase, ENGINE_VERSION
+from macro_engine  import fetch_all_indicators, calc_macro_phase, ENGINE_VERSION, detect_systemic_risk
 from fund_fetcher  import (
     fetch_fund_by_key, search_moneydj_by_name,
     fetch_fund_structure, fetch_fund_from_moneydj_url,
     tdcc_search_fund, get_proxy_config,
     safe_float, classify_fetch_status, clean_risk_table,
     normalize_result_state, merge_non_empty, set_risk_free_rate,
+    fetch_market_news,
 )
-from ai_engine       import analyze_macro, analyze_fund_json
+from ai_engine       import analyze_macro, analyze_fund_json, analyze_macro_structured
 from backtest_engine import calc_performance_metrics, quick_backtest, backtest_portfolio
 from portfolio_engine import (
     calc_fund_factor_score,
@@ -65,6 +66,7 @@ for _k, _v in {
     "current_fund":None,"fund_data":None,
     "tdcc_results":[],"mj_fund_data":None,
     "portfolio_funds":[],"portfolio_core_pct":75,
+    "news_items":[],"systemic_risk_data":None,
 }.items():
     if _k not in st.session_state:
         st.session_state[_k] = _v
@@ -248,6 +250,19 @@ with tab1:
                 if ind and "FED_RATE" in ind:
                     set_risk_free_rate(ind["FED_RATE"].get("value",4.0) / 100)
                 st.success(f"✅ 已抓取 {len(ind)} 個指標！（{_now_tw().strftime('%H:%M')} TW）")
+            with st.spinner("📰 抓取市場新聞 + 系統性風險掃描..."):
+                try:
+                    _news = fetch_market_news(max_per_feed=5)
+                    st.session_state.news_items = _news
+                    _srd = detect_systemic_risk(_news)
+                    st.session_state.systemic_risk_data = _srd
+                    _rl = _srd.get("risk_level","LOW")
+                    _rs = _srd.get("risk_score",0)
+                    st.info(f"📰 已掃描 {len(_news)} 則新聞｜系統性風險：{_srd.get('risk_icon','⬜')} {_rl}（評分 {_rs}）")
+                except Exception as _ne:
+                    st.session_state.news_items = []
+                    st.session_state.systemic_risk_data = None
+                    st.warning(f"⚠️ 新聞抓取失敗（不影響指標）：{str(_ne)[:80]}")
 
     if st.session_state.macro_done:
         ind   = st.session_state.indicators
@@ -330,6 +345,32 @@ with tab1:
         elif _risk == 1 and _msgs:
             st.warning(f"⚠️ 市場溫度偏高：{'　|　'.join(_msgs)}　→ 衛星部位設停利")
 
+        # ── 系統性風險偵測（新聞 NLP）──
+        _srd = st.session_state.get("systemic_risk_data")
+        if _srd:
+            _rl  = _srd.get("risk_level","LOW")
+            _rs  = _srd.get("risk_score",0)
+            _rc  = _srd.get("risk_color","#888")
+            _ri  = _srd.get("risk_icon","⬜")
+            _adv = _srd.get("advice","")
+            _trig = _srd.get("triggered",[])
+            _srd_bg = {"HIGH":"#2a0a0a","MEDIUM":"#2a1f00","LOW":"#0a1a0a"}.get(_rl,"#111")
+            _srd_border = {"HIGH":"#f44336","MEDIUM":"#ff9800","LOW":"#00c853"}.get(_rl,"#30363d")
+            _trig_html = ""
+            if _trig:
+                _trig_html = "<div style='margin-top:6px;display:flex;flex-wrap:wrap;gap:4px'>"
+                for t in _trig[:6]:
+                    _trig_html += f"<span style='background:#1a1a2e;color:{_rc};border:1px solid {_rc};padding:2px 8px;border-radius:12px;font-size:11px'>#{t['keyword']}({t['sub_score']})</span>"
+                _trig_html += "</div>"
+            st.markdown(
+                f"<div style='background:{_srd_bg};border:1px solid {_srd_border};border-radius:10px;padding:12px 16px;margin:8px 0'>"
+                f"<div style='display:flex;align-items:center;gap:10px'>"
+                f"<span style='font-size:24px'>{_ri}</span>"
+                f"<div><div style='color:#888;font-size:11px'>新聞系統性風險偵測</div>"
+                f"<div style='color:{_rc};font-weight:800;font-size:15px'>{_rl} （評分 {_rs}）</div></div>"
+                f"<div style='flex:1;text-align:right;color:#ccc;font-size:11px'>{_adv}</div></div>"
+                f"{_trig_html}</div>", unsafe_allow_html=True)
+
         # ── 指標貢獻明細（折疊）──
         with st.expander("📊 各指標貢獻明細", expanded=False):
             _rows = []
@@ -345,13 +386,33 @@ with tab1:
             if _rows:
                 st.dataframe(pd.DataFrame(_rows), use_container_width=True, hide_index=True)
 
-        # ── AI 總經分析 ──
+        # ── 市場新聞（折疊）──
+        _news_items = st.session_state.get("news_items",[])
+        if _news_items:
+            with st.expander(f"📰 市場新聞（{len(_news_items)} 則）", expanded=False):
+                for _ni in _news_items[:20]:
+                    _nt = _ni.get("title","")[:90]
+                    _ns = _ni.get("source","")
+                    _nu = _ni.get("url","") or _ni.get("link","")
+                    _nd = str(_ni.get("published",""))[:16]
+                    if _nu:
+                        st.markdown(f"**[{_nt}]({_nu})** <span style='color:#888;font-size:11px'>｜{_ns} {_nd}</span>", unsafe_allow_html=True)
+                    else:
+                        st.markdown(f"**{_nt}** <span style='color:#888;font-size:11px'>｜{_ns} {_nd}</span>", unsafe_allow_html=True)
+
+        # ── AI 結構化總經摘要 ──
         st.divider()
         if GEMINI_KEY:
-            if st.button("🤖 AI 總經解讀", key="btn_macro_ai"):
-                with st.spinner("Gemini 分析中..."):
+            if st.button("🤖 AI 結構化總經摘要", key="btn_macro_ai", type="primary"):
+                with st.spinner("Gemini 生成【現狀解讀】【系統性風險】【觀察重點】中..."):
                     try:
-                        _ai_txt = analyze_macro(GEMINI_KEY, ind, phase)
+                        _ai_txt = analyze_macro_structured(
+                            api_key      = GEMINI_KEY,
+                            indicators   = ind,
+                            phase_info   = phase,
+                            news_items   = st.session_state.get("news_items",[]),
+                            systemic_risk= st.session_state.get("systemic_risk_data"),
+                        )
                         st.session_state.macro_ai = _ai_txt
                     except Exception as _e:
                         st.error(f"AI 分析失敗：{_e}")
