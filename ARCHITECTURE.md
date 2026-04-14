@@ -158,6 +158,95 @@ my-fund-dashboard/
 
 ---
 
+## §5 核心函式 I/O 定義 — ai_engine, portfolio_engine, backtest_engine
+
+### 5.1 ai_engine.py
+
+| 函式 | 輸入 | 輸出 | 說明 |
+|------|------|------|------|
+| `_build_snapshot(indicators, phase_info, portfolio_funds, focus_fund, news_headlines)` | `dict, dict, list, dict, list` | `str` | 壓縮所有數據為純文字快照（目標 < 800 tokens），供 Gemini prompt 使用 |
+| `analyze_macro_structured(api_key, indicators, phase_info, news_items, systemic_risk, max_tokens)` | `str, dict, dict, list, dict, int` | `str` | MetaPrompt v18.2 四段結構輸出（景氣判讀/配置建議/持倉警示/待辦清單） |
+| `analyze_fund_json(api_key, fund_name, metrics, perf_data, phase_info, risk_metrics, holdings, currency)` | `str, str, dict, dict, dict, dict, dict, str` | `str` | 精簡 JSON 摘要（< 300 tokens 輸入），單一基金 AI 分析 |
+| `analyze_portfolio_correlation(api_key, funds_list, phase_info, data_text)` | `str, list, dict, str` | `str` | 組合相關性 + 配置建議，呼叫 analyze_global |
+| `analyze_macro(api_key, indicators, phase_info, …)` | `str, dict, dict` | `str` | 薄包裝，轉呼叫 `analyze_global` |
+
+**`analyze_macro_structured` 輸出格式（Markdown）：**
+```
+### 📍 一、景氣位階判讀
+### ⚖️ 二、資產配置建議
+### 🔴 三、持倉警示
+### 🔄 四、本週操作待辦清單
+- [ ] 待辦項目（checkbox 格式）
+```
+
+---
+
+### 5.2 portfolio_engine.py
+
+| 函式 | 輸入 | 輸出 | 說明 |
+|------|------|------|------|
+| `calc_fund_factor_score(fund_data, risk_table, expense_ratio)` | `dict, dict\|None, float\|None` | `dict` | 六因子加權評分（0~100），回傳 grade A/B/C/D |
+| `dividend_safety(total_return, dividend_yield, nav_change)` | `float\|None, float, float\|None` | `dict` | 吃本金診斷，回傳燈號與覆蓋率 |
+| `optimize_portfolio(returns_df, rf, max_weight, min_weight)` | `pd.DataFrame, float, float, float` | `dict` | Scipy SLSQP 最大化 Sharpe，回傳最佳權重 |
+| `risk_alert(drawdown, coverage, regime, fed_direction, hy_spread, vix)` | 各項 `float\|None` | `list[dict]` | 即時風險預警，回傳警示清單（含 level/type/message） |
+| `calc_kelly(series, lookback, risk_free)` | `pd.Series, int, float` | `dict` | 凱利公式計算最佳投入比例 |
+
+**`calc_fund_factor_score` 輸出結構：**
+```
+{
+  score:         float,        # 0~100
+  grade:         str,          # "A"|"B"|"C"|"D"
+  factors_count: int,          # 實際計入因子數
+  factors: {
+    Sharpe:      {value, score, weight},
+    Sortino:     {value, score, weight},
+    MaxDrawdown: {value, score, weight},
+    Calmar:      {value, score, weight},
+    Alpha:       {value, score, weight},
+    ExpenseRatio:{value, score, weight},
+  }
+}
+```
+
+**`dividend_safety` 輸出結構：**
+```
+{
+  status:          str,    # "🟢 健康"|"🟡 邊緣"|"🔴 吃本金警示"|"🔴 嚴重吃本金"
+  alert_level:     str,    # "green"|"yellow"|"red"
+  coverage:        float,  # total_return / dividend_yield
+  eating_principal:bool,
+  message:         str,
+  nav_warning:     str|None,
+}
+```
+
+---
+
+### 5.3 backtest_engine.py
+
+| 函式 | 輸入 | 輸出 | 說明 |
+|------|------|------|------|
+| `backtest_portfolio(nav_df, weights, rebalance)` | `pd.DataFrame, pd.Series, str` | `pd.DataFrame` | 定期再平衡回測，回傳每日資產曲線 DataFrame |
+| `calc_performance_metrics(equity_curve, returns, rf, freq)` | `pd.Series, pd.Series, float, int` | `dict` | 計算 Sharpe/Sortino/MaxDD/Calmar/年化報酬/年化波動 |
+| `compare_with_benchmark(port_curve, bench_curve)` | `pd.Series, pd.Series` | `dict` | 超額報酬 / Tracking Error / Information Ratio |
+| `quick_backtest(nav_series, freq)` | `pd.Series, int` | `dict` | 單一基金快速回測，直接回傳績效指標 dict |
+
+**`calc_performance_metrics` 輸出結構：**
+```
+{
+  total_return:  float,  # 累積總報酬 %
+  ann_return:    float,  # 年化報酬 %
+  ann_vol:       float,  # 年化波動 %
+  sharpe:        float,
+  sortino:       float,
+  max_drawdown:  float,  # 最大回撤 %（負值）
+  calmar:        float,
+  periods:       int,    # 計算期數
+}
+```
+
+---
+
 ## §3 資料流向
 
 ### 3.1 全域啟動流
