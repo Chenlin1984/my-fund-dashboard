@@ -531,6 +531,39 @@ with tab2:
                 fig_n.update_layout(paper_bgcolor="#0e1117",plot_bgcolor="#161b22",font_color="#e6edf3",height=370,margin=dict(t=15,b=30,l=40,r=20),legend=dict(orientation="h",font_size=10,y=1.02),hovermode="x unified",yaxis_title="淨值")
                 st.plotly_chart(fig_n, use_container_width=True)
 
+                # ── MK 標準差買點分析 ──
+                _m_buy1 = m.get("buy1"); _m_buy2 = m.get("buy2"); _m_buy3 = m.get("buy3")
+                _m_sell1 = m.get("sell1")
+                _m_pl = m.get("pos_label",""); _m_pc = m.get("pos_color","#888")
+                _m_mode = m.get("buy_mode",""); _m_std_src = m.get("std_source","nav")
+                _m_nav_v = float(m.get("nav") or 0)
+                if _m_buy1:
+                    _buy_rows = ""
+                    for _bv, _bl, _bc in [(_m_buy1,"-1σ 小跌可買","#69f0ae"),(_m_buy2,"-2σ 急跌加碼","#00c853"),(_m_buy3,"-3σ 大跌大買","#9c27b0")]:
+                        if _bv:
+                            _dist = round(abs(_m_nav_v - _bv), 4) if _m_nav_v else 0
+                            _dir  = "▲" if _m_nav_v > _bv else "▼"
+                            _buy_rows += (f"<div style='display:flex;align-items:center;justify-content:space-between;"
+                                          f"padding:4px 10px;background:#0d1117;border-radius:6px;margin:2px 0'>"
+                                          f"<span style='color:{_bc};font-size:12px'>{_bl}</span>"
+                                          f"<span style='font-weight:700;font-size:13px'>{_bv:.4f}</span>"
+                                          f"<span style='color:#666;font-size:11px'>{_dir} {_dist:.4f}</span></div>")
+                    _sell_row = (f"<div style='display:flex;align-items:center;justify-content:space-between;"
+                                 f"padding:4px 10px;background:#0d1117;border-radius:6px;margin:2px 0'>"
+                                 f"<span style='color:#f44336;font-size:12px'>🔔 停利點</span>"
+                                 f"<span style='font-weight:700;font-size:13px'>{_m_sell1:.4f}</span>"
+                                 f"<span style='color:#666;font-size:11px'></span></div>") if _m_sell1 else ""
+                    st.markdown(
+                        f"<div style='background:#161b22;border:1px solid #30363d;border-radius:10px;padding:12px 16px;margin:10px 0'>"
+                        f"<div style='display:flex;align-items:center;justify-content:space-between;margin-bottom:8px'>"
+                        f"<span style='color:#888;font-size:11px'>📍 MK 標準差買點（{_m_mode} ｜ σ 來源：{_m_std_src}）</span>"
+                        f"<span style='background:#111;color:{_m_pc};border:1px solid {_m_pc};padding:2px 10px;"
+                        f"border-radius:12px;font-size:12px;font-weight:700'>{_m_pl}</span>"
+                        f"</div>"
+                        + _buy_rows + _sell_row
+                        + f"<div style='color:#666;font-size:10px;margin-top:6px'>現值 {_m_nav_v:.4f}</div>"
+                        + "</div>", unsafe_allow_html=True)
+
                 # 關鍵指標 + 配息
                 col_a, col_b = st.columns(2)
                 with col_a:
@@ -568,6 +601,42 @@ with tab2:
                             st.markdown(f"<div style='display:flex;justify-content:space-between;padding:4px 10px;background:#161b22;border-radius:6px;margin:2px 0'><span style='color:#888;font-size:11px'>{_dt}</span><span style='font-weight:700'>{_amt}</span><span style='color:#ff9800;font-size:11px'>{_yld}</span></div>", unsafe_allow_html=True)
                     else:
                         st.info("無配息記錄")
+
+                # ── 持股分析（折疊）──
+                _holdings = mj_raw.get("holdings", {}) or {}
+                _sectors  = _holdings.get("sector_alloc", []) or []
+                _tops     = _holdings.get("top_holdings", []) or []
+                _hdate    = _holdings.get("data_date", "")
+                if _sectors or _tops:
+                    with st.expander(f"📂 持股分析" + (f"（{_hdate}）" if _hdate else ""), expanded=False):
+                        _hc1, _hc2 = st.columns(2)
+                        with _hc1:
+                            if _sectors:
+                                st.markdown("**🏭 產業配置**")
+                                for _sec in _sectors[:10]:
+                                    _sn = str(_sec.get("name",""))[:18]
+                                    _sp = float(_sec.get("pct", 0) or 0)
+                                    st.markdown(
+                                        f"<div style='display:flex;align-items:center;gap:8px;margin:3px 0'>"
+                                        f"<div style='color:#ccc;font-size:11px;width:95px;flex-shrink:0'>{_sn}</div>"
+                                        f"<div style='flex:1;background:#1a1a2a;border-radius:3px;height:10px'>"
+                                        f"<div style='background:#2196f3;width:{min(_sp*3,100):.0f}%;height:100%;border-radius:3px'></div></div>"
+                                        f"<div style='color:#2196f3;font-size:11px;width:40px;text-align:right'>{_sp:.1f}%</div>"
+                                        f"</div>", unsafe_allow_html=True)
+                        with _hc2:
+                            if _tops:
+                                st.markdown("**🏆 前10大持股**")
+                                for _i, _top in enumerate(_tops[:10], 1):
+                                    _tn = str(_top.get("name",""))[:22]
+                                    _tp = float(_top.get("pct", 0) or 0)
+                                    _ts = str(_top.get("sector",""))[:12]
+                                    st.markdown(
+                                        f"<div style='display:flex;gap:6px;padding:3px 8px;background:#161b22;border-radius:6px;margin:2px 0'>"
+                                        f"<span style='color:#555;font-size:11px;width:16px'>#{_i}</span>"
+                                        f"<span style='font-size:11px;flex:1'>{_tn}</span>"
+                                        f"<span style='color:#888;font-size:10px'>{_ts}</span>"
+                                        f"<span style='color:#58a6ff;font-weight:700;font-size:11px;width:36px;text-align:right'>{_tp:.1f}%</span>"
+                                        f"</div>", unsafe_allow_html=True)
 
                 # AI 基金分析
                 st.divider()
