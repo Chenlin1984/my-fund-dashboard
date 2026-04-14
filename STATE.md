@@ -3,11 +3,27 @@
 
 ## 📌 當前狀態
 - **環境**: Streamlit Cloud + GitHub
-- **進度**: 重構 Step 1-4 全部完成 ✅
+- **進度**: Tab5/Tab6 新增中（分段執行模式）
 - **工作分支**: `claude/system-detox-upgrade-ra7Tp`
-- **⚠️ 注意**: app.py 已全新改寫（889 行），4 Tab 零快取架構，可正常啟動
+- **⚠️ 注意**: tab5/tab6 定義已加入 app.py line 208，`with tab5:` / `with tab6:` 區塊尚待新增
 
-## 🔄 重構任務進度
+## 🎯 當前任務：新增 Tab5 資料診斷 + Tab6 說明書（分段執行計畫）
+
+| 步驟 | 內容 | 狀態 |
+|------|------|------|
+| Step A | app.py 末端新增 `with tab5:` — 總經 14 指標健康燈號表 + API Key 狀態 | ⏳ 待執行 |
+| Step B | app.py 末端 tab5 補充 — 基金診斷擴展欄（NAV/配息/持股/Sharpe 逐基金） | ⏳ 待執行 |
+| Step C | app.py 末端新增 `with tab6:` — 說明書 8 子頁（Macro Score / 景氣天氣 / 六因子 / 吃本金 / 再平衡 / TPI / 核心衛星 / 汰弱留強） | ⏳ 待執行 |
+| Step D | AST 語法驗證 → git commit → git push → 確認部署 | ⏳ 待執行 |
+
+## 📐 設計規範
+- **零快取**：禁止 `@st.cache_data`
+- **分段寫入**：每 Step 只動 app.py 末端，不動現有程式碼
+- **資料來源**：Tab5 讀取 `st.session_state.indicators` / `portfolio_funds` / `current_fund`
+
+---
+
+## 🔄 歷史重構任務進度
 
 | 步驟 | 內容 | 狀態 |
 |------|------|------|
