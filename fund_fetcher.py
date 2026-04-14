@@ -4075,14 +4075,19 @@ def fetch_holdings(code: str) -> dict:
     }
     """
     try:
-        BASE = "https://www.moneydj.com/funddj"
-        # v14.2: 改用 fetch_url_with_retry（Big5）；境內用 yp013000，境外用 yp013001
+        # v14.5: 先試 tcbbankfund 子網域（Streamlit Cloud IP 封鎖較少），再試 www
         _hold_page = "yp013000" if _is_domestic_code(code) else "yp013001"
-        r = fetch_url_with_retry(
-            f"{BASE}/yp/{_hold_page}.djhtm?a={code}",
-            headers=HDR, timeout=20, retries=2
-        )
-        if r is None or r.status_code != 200:  # Bug fix: r 可能為 None（fetch_url_with_retry 全失敗時）
+        _hold_urls = [
+            f"https://tcbbankfund.moneydj.com/funddj/yp/{_hold_page}.djhtm?a={code}",
+            f"https://www.moneydj.com/funddj/yp/{_hold_page}.djhtm?a={code}",
+        ]
+        r = None
+        for _hu in _hold_urls:
+            r = fetch_url_with_retry(_hu, headers=HDR, timeout=20, retries=2)
+            if r is not None and len(r.text) > 500:
+                break
+            r = None
+        if r is None:
             return {}
         soup = BeautifulSoup(r.text, "lxml")
         out = {}
