@@ -288,12 +288,12 @@ with st.sidebar:
                             break
                         else:
                             st.warning(f"⚠️ {_name} HTTP {_r.status_code}")
-                except _req.exceptions.ProxyError as _e:
-                    st.error(f"❌ ProxyError：NAS 無法連線\n```{str(_e)[:200]}```")
-                except _req.exceptions.ConnectTimeout:
-                    st.error("❌ Timeout：Port 3128 未轉發或 NAS 未啟動")
-                except Exception as _e:
-                    st.error(f"❌ 錯誤：{str(_e)[:200]}")
+                    except _req.exceptions.ProxyError as _e:
+                        st.error(f"❌ {_name} ProxyError：{str(_e)[:150]}")
+                    except _req.exceptions.Timeout:
+                        st.error(f"❌ {_name} Timeout（25s）：NAS 無法轉發至目標")
+                    except Exception as _e:
+                        st.error(f"❌ {_name} 錯誤：{str(_e)[:150]}")
 
     # ── 強制同步 GitHub 最新邏輯
     if st.sidebar.button("♻️ 強制同步 GitHub 最新邏輯", use_container_width=True,
