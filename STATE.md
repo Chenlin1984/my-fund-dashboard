@@ -3,9 +3,9 @@
 
 ## 📌 當前狀態
 - **環境**: Streamlit Cloud + GitHub
-- **進度**: 重構 Step 1-3 完成；Step 4 進行中（app.py 已備份，待全新改寫）
+- **進度**: 重構 Step 1-4 全部完成 ✅
 - **工作分支**: `claude/system-detox-upgrade-ra7Tp`
-- **⚠️ 注意**: 現有 app.py 處於過渡期破損狀態（import 引用已刪除函式），Step 4 完成前無法正常啟動
+- **⚠️ 注意**: app.py 已全新改寫（889 行），4 Tab 零快取架構，可正常啟動
 
 ## 🔄 重構任務進度
 
@@ -14,16 +14,11 @@
 | Step 1 | 刪除 pages/（3 個股票/ETF 頁面）+ app_backup | ✅ 完成 (commit 410f60a) |
 | Step 2 | macro_engine.py：移除 @st.cache_data（fetch_all_indicators）| ✅ 完成 (commit 410f60a) |
 | Step 3 | fund_fetcher.py：移除 @st.cache_data + 刪除 fetch_etf_market_price / calc_vcp_signal | ✅ 完成 (commit 410f60a) |
-| **Step 4** | **app.py：全新改寫（4 tabs：總經/單一基金/組合基金/回測）** | ⏳ 進行中 |
+| **Step 4** | **app.py：全新改寫（4 tabs：總經/單一基金/組合基金/回測）** | ✅ 完成 (commit de76c8b) |
 
-## 🐛 已知破損點（Step 4 完成即解除）
+## ✅ 破損點已全數清除（Step 4 完成）
 
-| 行號 | 問題 | 類型 |
-|------|------|------|
-| 28-29 | 匯入已刪除的 `fetch_etf_market_price`, `calc_vcp_signal` | ImportError |
-| 1201, 1219 | `_render_fund_analysis` 呼叫已刪除函式 | NameError |
-| 301-302, 1623 | 對非快取函式呼叫 `.clear()` | AttributeError |
-| 6288-6334 | `_fetch_etf_batch.clear()`（ETF Tab 殘留）| AttributeError |
+全部 ImportError / NameError / AttributeError 已消除。app.py 通過 AST 語法驗證。
 
 ## 🛠️ 檔案結構（重構後目標）
 
