@@ -216,11 +216,10 @@ def _detect_inflection(indicators):
     return {"inflection":infl,"signals":signals,"infl_score":score}
 
 
-@st.cache_data(ttl=3600, show_spinner=False)
 def fetch_all_indicators(fred_api_key, cache_date: str = ""):
     """
-    cache_date: 傳入當日日期字串（YYYY-MM-DD）作為 cache key 的一部分，
-    確保每天自動失效一次，即使 TTL 還沒到期。
+    無快取版本：每次呼叫都即時從 FRED / yfinance 抓取最新資料。
+    cache_date 參數保留以維持呼叫介面相容性，不再作為快取鍵。
     """
     R = {}
 
