@@ -127,7 +127,6 @@ def _detect_inflection(indicators):
     return {"inflection":infl,"signals":signals,"infl_score":score}
 
 
-@st.cache_data(ttl=3600, show_spinner=False)
 def fetch_all_indicators(fred_api_key):
     R = {}
 

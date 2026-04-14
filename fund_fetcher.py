@@ -4385,7 +4385,6 @@ def calc_metrics(s: pd.Series, divs: list, risk_override: dict = None) -> dict:
 # ════════════════════════════════════════════════════════════
 # 主入口：full_key → 淨值 + 配息 + MK
 # ════════════════════════════════════════════════════════════
-@st.cache_data(ttl=1800, show_spinner=False)
 def fetch_fund_by_key(full_key: str, fund_name: str = "",
                       portal: str = "", source: str = "",
                       manual_nav_csv: str = "") -> dict:
@@ -4426,7 +4425,6 @@ def fetch_fund_by_key(full_key: str, fund_name: str = "",
 
 
 # 保留相容性（舊 main.py 呼叫）
-@st.cache_data(ttl=1800, show_spinner=False)
 def fetch_fund_by_code(insurance_code: str, gemini_key: str = "",
                        manual_full_key: str = "",
                        manual_nav_csv: str = "") -> dict:
