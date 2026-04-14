@@ -267,15 +267,17 @@ with st.sidebar:
     if st.sidebar.button("🔍 測試 Proxy 連線", use_container_width=True,
                          help="從 Streamlit Cloud 直接測試 NAS Proxy 是否可達"):
         import requests as _req
-        _test_url = "http://www.google.com"
+        # 用純 HTTP endpoint 避免 HTTPS redirect 干擾
+        _test_url = "http://httpbin.org/ip"
         _pcfg = get_proxy_config()
         with st.sidebar:
             if not _pcfg:
                 st.error("Proxy 未設定，請先填寫 Streamlit Cloud Secrets")
             else:
                 try:
-                    _r = _req.get(_test_url, proxies=_pcfg, timeout=10)
-                    if _r.status_code == 200:
+                    _r = _req.get(_test_url, proxies=_pcfg, timeout=15,
+                                  allow_redirects=False)
+                    if _r.status_code in (200, 301, 302):
                         st.success(f"✅ Proxy 可達！HTTP {_r.status_code}")
                     elif _r.status_code == 407:
                         st.error("❌ 407：帳密錯誤，請確認 NAS 認證設定")
