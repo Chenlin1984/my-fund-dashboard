@@ -31,7 +31,7 @@ from portfolio_engine import (
 )
 from macro_engine import identify_regime
 
-APP_VERSION = "v18.0_Refactor"
+APP_VERSION = "v18.2_CoreProtocol"
 
 # ══════════════════════════════════════════════════════
 # Page config & CSS
