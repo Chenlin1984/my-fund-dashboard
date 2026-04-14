@@ -1,10 +1,3 @@
-# =================================================
-# 【Cell 6】寫入 macro_engine.py（總經引擎）
-# 說明：生成總經位階分析引擎，包含 FRED 資料抓取、
-#        PMI/CPI/利差偵測、景氣位階計算、衰退機率估算。
-# 新手提示：直接執行即可，不需要修改。
-#            若 FRED_API_KEY 未填，總經功能會停用但不影響基金功能。
-# =================================================
 """
 總經位階 + 拐點偵測 v7
 修正：殖利率利差使用 merge_asof（日頻 vs 月頻對齊）
@@ -13,11 +6,7 @@
 import requests, yfinance as yf, pandas as pd, numpy as np, streamlit as st, math
 
 FRED_BASE = "https://api.stlouisfed.org/fred/series/observations"
-
-# ── 版本戳記：修改此值 = 確認 GitHub 已更新並部署至 Streamlit Cloud
-ENGINE_VERSION = "v17.2_BugFix"
-
-# ── Self-healing snapshot: 記錄最後一次成功抓取的指標資料
+ENGINE_VERSION = "v18.0_Refactor"
 _INDICATOR_SNAPSHOT: dict = {}
 
 def _fred(sid, key, n=250):
@@ -40,65 +29,7 @@ def _yf_s(ticker, period="2y"):
     try:
         h = yf.Ticker(ticker).history(period=period, auto_adjust=True)
         return h["Close"].dropna() if not h.empty else pd.Series(dtype=float)
-    except Exception as e:
-        print(f"[yf_s {ticker}] {e}")
-        return pd.Series(dtype=float)
-
-def _calc_z(series: pd.Series, current_val: float) -> float | None:
-    """計算當前值相對於歷史序列的 Z-Score（標準化位置）"""
-    if series is None or len(series) < 12:
-        return None
-    mu = float(series.mean())
-    sigma = float(series.std())
-    if sigma == 0:
-        return 0.0
-    return round((current_val - mu) / sigma, 2)
-
-
-def get_trend_strength(series: pd.Series, window: int = 3) -> float:
-    """
-    Smart Slope v2：非重複有效值回溯（說明書 §2，穿透「假性停滯」）
-    ─────────────────────────────────────────────────────────────
-    當月報指標（PMI、CPI 等）連續數期不更新，tail(3) 取到的是三個相同數值，
-    polyfit 斜率為 0，AI 誤判為「無趨勢」。
-
-    修正：去除連續重複值後取最後 window 個「有效轉折點」，
-    即使當前值已停滯一個月，仍能反映更早期的趨勢方向。
-    邊界保護：window < 2 個不同值時 fallback 至所有可用點。
-    """
-    valid = series.dropna()
-    if len(valid) < 2:
-        return 0.0
-    # 去除連續重複（保留每段值的最後一次出現 → 保留最新的不重複趨勢點）
-    deduped = valid.loc[valid != valid.shift()]
-    if len(deduped) < 2:
-        # 全部相同 → 改用原始序列的最後兩點保持完整性
-        deduped = valid
-    y = deduped.tail(window).values.astype(float)
-    if len(y) < 2:
-        return 0.0
-    x = np.arange(len(y))
-    try:
-        slope, _ = np.polyfit(x, y, 1)
-        return round(float(np.clip(slope, -1e6, 1e6)), 4)
-    except Exception:
-        return 0.0
-
-
-def _calc_days_stale(date_str: str) -> int | None:
-    """計算距離 FRED 最後發布日的天數（用於停滯警示）"""
-    if not date_str or date_str == "即時":
-        return None
-    try:
-        s = str(date_str).strip()[:10]
-        if len(s) == 7:          # "YYYY-MM" → 月底
-            dt = pd.Timestamp(s + "-01") + pd.offsets.MonthEnd(0)
-        else:
-            dt = pd.Timestamp(s)
-        return max(0, (pd.Timestamp.now() - dt).days)
-    except Exception:
-        return None
-
+    except: return pd.Series(dtype=float)
 
 def _trend(vals):
     if len(vals) < 3: return ""
@@ -138,33 +69,14 @@ def _detect_inflection(indicators):
     signals = []; score = 0
     def _chk(key, attr="value"): return indicators.get(key,{}).get(attr)
 
-    # ── PMI（改用線性斜率，解決數據平躺問題）──────────────────
-    pmi_v     = _chk("PMI"); pmi_p = _chk("PMI","prev")
-    pmi_slope = _chk("PMI","trend_slope")  # 由 get_trend_strength() 計算
-    if pmi_v is not None:
-        if pmi_slope is not None:
-            # 斜率判斷（比 diff 更早感知轉折）
-            if pmi_v < 50 and pmi_slope > 0.05:
-                signals.append({"type":"buy",
-                    "text":f"PMI {pmi_v:.1f} 收縮但斜率轉正 +{pmi_slope:.2f}（底部反彈訊號）"}); score += 2
-            elif pmi_v >= 50 and pmi_slope > 0.05:
-                signals.append({"type":"bull",
-                    "text":f"PMI {pmi_v:.1f} 擴張加速（斜率 +{pmi_slope:.2f}）"}); score += 1
-            elif pmi_v >= 50 and pmi_slope < -0.05:
-                # 擴張區但斜率轉負 → 景氣減速拐點（說明書 §2 關鍵判定）
-                signals.append({"type":"warn",
-                    "text":f"⚠️ PMI {pmi_v:.1f} 擴張但加速放緩（斜率 {pmi_slope:.2f}），景氣可能見頂"}); score -= 2
-            elif pmi_v < 50 and pmi_slope < -0.05:
-                signals.append({"type":"warn",
-                    "text":f"PMI {pmi_v:.1f} 收縮且持續惡化（斜率 {pmi_slope:.2f}）"}); score -= 1
-        elif pmi_v and pmi_p:
-            # fallback：無斜率時仍保留原始 diff 比較
-            if pmi_v < 50 and pmi_v > pmi_p:
-                signals.append({"type":"buy","text":f"PMI {pmi_v:.1f} 收縮區止跌反彈（+{pmi_v-pmi_p:.1f}）"}); score += 2
-            elif pmi_v >= 50 and pmi_v > pmi_p:
-                signals.append({"type":"bull","text":f"PMI {pmi_v:.1f} 擴張且上升"}); score += 1
-            elif pmi_v >= 55 and pmi_v < pmi_p:
-                signals.append({"type":"warn","text":f"PMI {pmi_v:.1f} 高位回落，景氣可能見頂"}); score -= 1
+    pmi_v = _chk("PMI"); pmi_p = _chk("PMI","prev")
+    if pmi_v and pmi_p:
+        if pmi_v < 50 and pmi_v > pmi_p:
+            signals.append({"type":"buy","text":f"PMI {pmi_v:.1f} 收縮區但止跌反彈（+{pmi_v-pmi_p:.1f}）— 復甦訊號"}); score += 2
+        elif pmi_v >= 50 and pmi_v > pmi_p:
+            signals.append({"type":"bull","text":f"PMI {pmi_v:.1f} 擴張且上升"}); score += 1
+        elif pmi_v >= 55 and pmi_v < pmi_p:
+            signals.append({"type":"warn","text":f"PMI {pmi_v:.1f} 高位回落，景氣可能見頂"}); score -= 1
 
     y22 = indicators.get("YIELD_10Y2Y",{})
     v22 = y22.get("value"); p22 = y22.get("prev")
@@ -202,7 +114,6 @@ def _detect_inflection(indicators):
         if jb_v < jb_p and jb_v < 250000: signals.append({"type":"bull","text":f"初領失業金 {jb_v:,.0f} 改善"}); score += 1
         elif jb_v > 300000: signals.append({"type":"warn","text":f"初領失業金 {jb_v:,.0f} 高位"}); score -= 1
 
-    # 黃金組合
     if fed_v is not None and fed_p is not None and fed_v <= fed_p and fed_p > 0 and \
        cpi_v and cpi_v < 3.5 and "下降" in cpi_t:
         signals.append({"type":"buy","text":"⭐ MK黃金拐點：CPI+Fed Rate 雙雙見頂回落，勝率最高！"}); score += 5
@@ -216,20 +127,14 @@ def _detect_inflection(indicators):
     return {"inflection":infl,"signals":signals,"infl_score":score}
 
 
-def fetch_all_indicators(fred_api_key, cache_date: str = ""):
-    """
-    無快取版本：每次呼叫都即時從 FRED / yfinance 抓取最新資料。
-    cache_date 參數保留以維持呼叫介面相容性，不再作為快取鍵。
-    """
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_all_indicators(fred_api_key):
     R = {}
 
-    # ── PMI ⭐⭐⭐⭐⭐（最核心，weight=2）─────────────────────────
-    # Fix: NAPM = ISM Manufacturing PMI (primary); fallback to MANEMP composite
-    # NAPM may delay 1-2 months; fetch 60 rows to catch latest valid value
+    # ── PMI ─────────────────────────────────────────────────────────
     df = _fred("NAPM", fred_api_key, 60)
     if df.empty or len(df) < 2:
-        # Fallback: try ISMPMI (older alias) or skip
-        df = _fred("ISPMANPMI", fred_api_key, 60)  # S&P Global US Manufacturing PMI
+        df = _fred("ISPMANPMI", fred_api_key, 60)
     if len(df) >= 2:
         v = float(df.iloc[-1]["value"]); p = float(df.iloc[-2]["value"])
         s = df.set_index("date")["value"].tail(24)
@@ -240,7 +145,7 @@ def fetch_all_indicators(fred_api_key, cache_date: str = ""):
             score=2 if v>=50 else (-2 if v<45 else -1),
             weight=2, series=s)
 
-    # ── 殖利率利差（weight=2）─────────────────────────────────────
+    # ── 殖利率利差 ──────────────────────────────────────────────────
     df10 = _fred("DGS10", fred_api_key, 250)
     df2  = _fred("DGS2",  fred_api_key, 250)
     df3m = _fred("TB3MS", fred_api_key, 60)
@@ -271,15 +176,14 @@ def fetch_all_indicators(fred_api_key, cache_date: str = ""):
                 score=2 if v>0 else -2,
                 weight=2, series=sp3m)
 
-    # ── HY 信用利差（weight=2）⭐⭐⭐⭐⭐ ────────────────────────
+    # ── HY 信用利差 ──────────────────────────────────────────────────
     df = _fred("BAMLH0A0HYM2", fred_api_key, 120)
     if len(df) >= 2:
         s = df.set_index("date")["value"].tail(60)
         v = float(df.iloc[-1]["value"]); p = float(df.iloc[-2]["value"])
         R["HY_SPREAD"] = dict(
             name="HY 信用利差 (OAS)", value=round(v,2), prev=round(p,2),
-            unit="%", type="金融壓力",
-            date=str(df.iloc[-1]["date"])[:7],
+            unit="%", type="金融壓力", date=str(df.iloc[-1]["date"])[:7],
             desc="<4%樂觀 | 4~6%中性 | >6%風險 | 擴大=逃離高風險資產",
             trend=_trend(s.tolist()[-6:]),
             signal="🟢" if v<4 else ("🔴" if v>6 else "🟡"),
@@ -287,7 +191,7 @@ def fetch_all_indicators(fred_api_key, cache_date: str = ""):
             score=2 if v<4 else (-2 if v>6 else 0),
             weight=2, series=s)
 
-    # ── M2（weight=1）────────────────────────────────────────────
+    # ── M2 ───────────────────────────────────────────────────────────
     df = _fred("M2SL", fred_api_key, 60)
     if len(df) >= 13:
         s = df.set_index("date")["value"]
@@ -296,8 +200,7 @@ def fetch_all_indicators(fred_api_key, cache_date: str = ""):
         v = float(s24.iloc[-1]); p = float(s24.iloc[-2]) if len(s24)>=2 else v
         R["M2"] = dict(
             name="M2 貨幣供給 (YoY)", value=round(v,2), prev=round(p,2),
-            unit="%", type="流動性",
-            date=str(df.iloc[-1]["date"])[:7],
+            unit="%", type="流動性", date=str(df.iloc[-1]["date"])[:7],
             desc=">5%流動性寬鬆→利多 | <0%緊縮→壓力",
             trend=_trend(s24.tolist()[-6:]),
             signal="🟢" if v>5 else ("🔴" if v<0 else "🟡"),
@@ -305,21 +208,18 @@ def fetch_all_indicators(fred_api_key, cache_date: str = ""):
             score=1 if v>5 else (-1 if v<0 else 0),
             weight=1, series=s24)
 
-    # ── 市場廣度 RSP/SPY（weight=1）⭐⭐⭐⭐ ─────────────────────
+    # ── 市場廣度 RSP/SPY ─────────────────────────────────────────────
     try:
-        s_spy = _yf_s("SPY","1y")
-        s_rsp = _yf_s("RSP","1y")
+        s_spy = _yf_s("SPY","1y"); s_rsp = _yf_s("RSP","1y")
         if len(s_spy)>=22 and len(s_rsp)>=22:
             ratio = (s_rsp / s_spy).dropna()
             ratio = ratio.reindex(s_spy.index, method="ffill").dropna()
-            v = round(float(ratio.iloc[-1]),4)
-            m1 = round(float(ratio.iloc[-22]),4)
-            chg = round((v-m1)/m1*100,2) if m1 != 0 else 0.0
+            v = round(float(ratio.iloc[-1]),4); m1 = round(float(ratio.iloc[-22]),4)
+            chg = round((v-m1)/m1*100,2)
             s_w = ratio.resample("W").last().tail(52)
             R["ADL"] = dict(
                 name="市場廣度 RSP/SPY", value=round(v,4), prev=round(chg,2),
-                unit="", type="市場廣度",
-                date="即時",
+                unit="", type="市場廣度", date="即時",
                 desc=f"等/市值比率月變{chg:+.2f}% | 上升=多頭健康 | 下降=僅七巨頭撐盤",
                 trend="up" if chg>0.5 else ("down" if chg<-0.5 else "flat"),
                 signal="🟢" if chg>0.5 else ("🔴" if chg<-1 else "🟡"),
@@ -329,17 +229,15 @@ def fetch_all_indicators(fred_api_key, cache_date: str = ""):
     except Exception as e:
         print(f"[ADL] {e}")
 
-    # ── DXY（weight=1）───────────────────────────────────────────
+    # ── DXY ──────────────────────────────────────────────────────────
     s_dxy = _yf_s("DX-Y.NYB", "2y")
     if len(s_dxy) >= 22:
-        v = round(float(s_dxy.iloc[-1]),2)
-        m1 = round(float(s_dxy.iloc[-22]),2)
-        chg_m = round((v-m1)/m1*100, 2) if m1 != 0 else 0.0
+        v = round(float(s_dxy.iloc[-1]),2); m1 = round(float(s_dxy.iloc[-22]),2)
+        chg_m = round((v-m1)/m1*100, 2)
         s_w = s_dxy.resample("W").last().tail(52)
         R["DXY"] = dict(
             name="美元指數 DXY", value=v, prev=round(chg_m,2),
-            unit="", type="資金流向",
-            date="即時",
+            unit="", type="資金流向", date="即時",
             desc=f"月漲跌 {chg_m:+.2f}% | 弱美元→新興市場利多 | 強美元→壓縮",
             trend="up" if chg_m>1 else ("down" if chg_m<-1 else "flat"),
             signal="🟡" if abs(chg_m)<1 else ("🟢" if chg_m<-1 else "🔴"),
@@ -347,7 +245,7 @@ def fetch_all_indicators(fred_api_key, cache_date: str = ""):
             score=1 if chg_m<-1 else (-1 if chg_m>2 else 0),
             weight=1, series=s_w)
 
-    # ── Fed 資產負債表（weight=1）────────────────────────────────
+    # ── Fed 資產負債表 ────────────────────────────────────────────────
     df = _fred("WALCL", fred_api_key, 104)
     if len(df) >= 13:
         s = df.set_index("date")["value"]
@@ -356,8 +254,7 @@ def fetch_all_indicators(fred_api_key, cache_date: str = ""):
         v = float(s24.iloc[-1]); p = float(s24.iloc[-2]) if len(s24)>=2 else v
         R["FED_BS"] = dict(
             name="Fed 資產負債表 (YoY)", value=round(v,2), prev=round(p,2),
-            unit="%", type="流動性",
-            date=str(df.iloc[-1]["date"])[:7],
+            unit="%", type="流動性", date=str(df.iloc[-1]["date"])[:7],
             desc="擴表=注入流動性→利多 | 縮表=抽走流動性→壓力",
             trend=_trend(s24.tolist()[-6:]),
             signal="🟢" if v>5 else ("🔴" if v<-5 else "🟡"),
@@ -365,7 +262,7 @@ def fetch_all_indicators(fred_api_key, cache_date: str = ""):
             score=1 if v>5 else (-1 if v<-5 else 0),
             weight=1, series=s24)
 
-    # ── VIX（weight=1）───────────────────────────────────────────
+    # ── VIX ──────────────────────────────────────────────────────────
     s_vix = _yf_s("^VIX","1y")
     if len(s_vix) >= 6:
         v = round(float(s_vix.iloc[-1]),2); p = round(float(s_vix.iloc[-6]),2)
@@ -377,7 +274,7 @@ def fetch_all_indicators(fred_api_key, cache_date: str = ""):
             score=1 if v<18 else (-1 if v>30 else 0),
             weight=1, series=s_m)
 
-    # ── CPI（weight=0.5，落後）───────────────────────────────────
+    # ── CPI ──────────────────────────────────────────────────────────
     df = _fred("CPIAUCSL", fred_api_key, 120)
     if len(df) >= 14:
         s = df.set_index("date")["value"]
@@ -387,14 +284,13 @@ def fetch_all_indicators(fred_api_key, cache_date: str = ""):
         t = _trend(s24.tolist()[-6:])
         R["CPI"] = dict(name="CPI 通膨率 (YoY)", value=round(v,2), prev=round(p,2),
             unit="%", type="落後", date=str(df.iloc[-1]["date"])[:7],
-            desc="目標2% | 高位回落=利多拐點",
-            trend=t,
+            desc="目標2% | 高位回落=利多拐點", trend=t,
             signal="🟢" if 1<v<2.5 else ("🔴" if v>4 else "🟡"),
             color="#00c853" if 1<v<2.5 else ("#f44336" if v>4 else "#ff9800"),
             score=1 if 1<v<2.5 else (-1 if v>4 else 0),
             weight=0.5, series=s24)
 
-    # ── Fed Rate（weight=0.5，落後）──────────────────────────────
+    # ── Fed Rate ──────────────────────────────────────────────────────
     df = _fred("FEDFUNDS", fred_api_key, 60)
     if len(df) >= 2:
         s = df.set_index("date")["value"].tail(36)
@@ -407,7 +303,7 @@ def fetch_all_indicators(fred_api_key, cache_date: str = ""):
             score=1 if v<p else (-1 if v>5 else 0),
             weight=0.5, series=s)
 
-    # ── 失業率（weight=0.5，落後）────────────────────────────────
+    # ── 失業率 ───────────────────────────────────────────────────────
     df = _fred("UNRATE", fred_api_key, 60)
     if len(df) >= 2:
         s = df.set_index("date")["value"].tail(36)
@@ -420,7 +316,7 @@ def fetch_all_indicators(fred_api_key, cache_date: str = ""):
             score=1 if v<4.5 else (-2 if v>6 else 0),
             weight=0.5, series=s)
 
-    # ── PPI（weight=0.5）─────────────────────────────────────────
+    # ── PPI ──────────────────────────────────────────────────────────
     df = _fred("PPIACO", fred_api_key, 36)
     if len(df) >= 13:
         s = df.set_index("date")["value"]
@@ -428,7 +324,8 @@ def fetch_all_indicators(fred_api_key, cache_date: str = ""):
         s24 = yoy.dropna().tail(24)
         v = float(s24.iloc[-1]) if len(s24) >= 1 else 0
         p = float(s24.iloc[-2]) if len(s24) >= 2 else None
-        R["PPI"] = dict(name="PPI 生產者物價 (YoY)", value=round(v,2), prev=round(p,2) if p else None,
+        R["PPI"] = dict(name="PPI 生產者物價 (YoY)", value=round(v,2),
+            prev=round(p,2) if p else None,
             unit="%", type="領先", date=str(df.iloc[-1]["date"])[:7],
             desc="領先CPI，0~3%溫和，>5%過熱",
             trend=_trend(s24.tolist()[-6:]),
@@ -437,7 +334,7 @@ def fetch_all_indicators(fred_api_key, cache_date: str = ""):
             score=0.5 if 0<v<3 else (-0.5 if v>5 else 0),
             weight=0.5, series=s24)
 
-    # ── 銅博士（weight=0.5）──────────────────────────────────────
+    # ── 銅博士 ────────────────────────────────────────────────────────
     s_cu = _yf_s("HG=F","2y")
     if len(s_cu) >= 22:
         now = float(s_cu.iloc[-1]); prev = float(s_cu.iloc[-22])
@@ -451,7 +348,7 @@ def fetch_all_indicators(fred_api_key, cache_date: str = ""):
             score=0.5 if chg>2 else (-0.5 if chg<-5 else 0),
             weight=0.5, series=monthly.dropna().tail(24))
 
-    # ── 消費者信心（weight=0.5）──────────────────────────────────
+    # ── 消費者信心 ────────────────────────────────────────────────────
     df = _fred("UMCSENT", fred_api_key, 36)
     if len(df) >= 2:
         s = df.set_index("date")["value"].tail(24)
@@ -465,7 +362,7 @@ def fetch_all_indicators(fred_api_key, cache_date: str = ""):
             score=0.5 if v>80 else (-0.5 if v<60 else 0),
             weight=0.5, series=s)
 
-    # ── 初領失業金（weight=0.5）──────────────────────────────────
+    # ── 初領失業金 ────────────────────────────────────────────────────
     df = _fred("ICSA", fred_api_key, 52)
     if len(df) >= 2:
         s = df.set_index("date")["value"].tail(52)
@@ -479,7 +376,7 @@ def fetch_all_indicators(fred_api_key, cache_date: str = ""):
             score=0.5 if v<230000 else (-0.5 if v>300000 else 0),
             weight=0.5, series=s/10000)
 
-    # ── 新屋銷售（weight=0.5）────────────────────────────────────
+    # ── 新屋銷售 ──────────────────────────────────────────────────────
     df = _fred("HSN1F", fred_api_key, 36)
     if len(df) >= 2:
         s = df.set_index("date")["value"].tail(24)
@@ -491,43 +388,7 @@ def fetch_all_indicators(fred_api_key, cache_date: str = ""):
             score=0.5 if v>p else -0.5,
             weight=0.5, series=s)
 
-    # ── Post-process：Z-Score + 線性斜率趨勢 + 停滯天數
-    for _key, _d in R.items():
-        _series = _d.get("series")
-        _val    = _d.get("value")
-        # Z-Score
-        if _val is not None and _series is not None and hasattr(_series, "__len__"):
-            try:
-                _d["z_score"] = _calc_z(_series, float(_val))
-            except Exception:
-                _d["z_score"] = None
-        else:
-            _d["z_score"] = None
-        # 線性斜率（解決月報平躺問題）
-        if _series is not None and hasattr(_series, "dropna"):
-            try:
-                _d["trend_slope"] = get_trend_strength(_series, window=3)
-            except Exception:
-                _d["trend_slope"] = None
-        else:
-            _d["trend_slope"] = None
-        # 停滯天數 + is_stale 旗標（說明書 §2：ffill 後回傳旗標讓 UI 標註新鮮度）
-        _d["days_stale"] = _calc_days_stale(_d.get("date", ""))
-        _d["is_stale"]   = bool(_d["days_stale"] is not None and _d["days_stale"] > 20)
-
-    # ── Self-healing snapshot：若成功取得 ≥5 個指標，更新快照
-    global _INDICATOR_SNAPSHOT
-    if len(R) >= 5:
-        _INDICATOR_SNAPSHOT = {k: {kk: vv for kk, vv in v.items() if kk != "series"}
-                               for k, v in R.items()}  # 快照不含 series（節省記憶體）
-    elif not R and _INDICATOR_SNAPSHOT:
-        # API 全部失敗時回傳最後一次快照並警告
-        st.warning("⚠️ 無法連線 FRED / Yahoo Finance，顯示最後快照資料（數值可能稍舊）")
-        return {k: dict(v) for k, v in _INDICATOR_SNAPSHOT.items()}
-
     return R
-
-
 def get_market_phase(indicators: dict) -> dict:
     """
     二維景氣位階判定（說明書 §3）：Z-Score 位階 × 線性斜率方向
