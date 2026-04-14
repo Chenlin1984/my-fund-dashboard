@@ -599,6 +599,25 @@ with tab2:
                         for d in divs[:6]:
                             _dt = d.get("date",""); _amt = d.get("amount",""); _yld = d.get("yield_pct","")
                             st.markdown(f"<div style='display:flex;justify-content:space-between;padding:4px 10px;background:#161b22;border-radius:6px;margin:2px 0'><span style='color:#888;font-size:11px'>{_dt}</span><span style='font-weight:700'>{_amt}</span><span style='color:#ff9800;font-size:11px'>{_yld}</span></div>", unsafe_allow_html=True)
+
+                        # ── 🚨 吃本金警示（Core Protocol Ch.3.2）──
+                        _tr1y = m.get("ret_1y")  # 含息總報酬率近 1 年（%）
+                        if _tr1y is not None and _adr > 0:
+                            _ds = div_safety_check(
+                                total_return=float(_tr1y),
+                                dividend_yield=float(_adr),
+                                nav_change=float(m.get("ret_1y", 0) or 0),
+                            )
+                            _al = _ds.get("alert_level","grey")
+                            _bg = {"red":"#2a0a0a","yellow":"#2a1f00","green":"#0a1a0a"}.get(_al,"#111")
+                            _bc = {"red":"#f44336","yellow":"#ff9800","green":"#00c853"}.get(_al,"#888")
+                            st.markdown(
+                                f"<div style='background:{_bg};border:1px solid {_bc};border-radius:8px;"
+                                f"padding:8px 12px;margin-top:8px'>"
+                                f"<div style='color:{_bc};font-weight:700;font-size:12px'>{_ds['status']}</div>"
+                                f"<div style='color:#ccc;font-size:11px;margin-top:2px'>{_ds['message']}</div>"
+                                + (f"<div style='color:#ff9800;font-size:10px;margin-top:4px'>{_ds['nav_warning']}</div>" if _ds.get("nav_warning") else "")
+                                + "</div>", unsafe_allow_html=True)
                     else:
                         st.info("無配息記錄")
 
@@ -779,24 +798,77 @@ with tab3:
             "目標核心資產比例（%）", 50, 90,
             st.session_state.get("portfolio_core_pct",75), 5, key="slider_core_pct")
 
-        # 現金流估算
+        # ── 以息養股雙模式現金流試算（Core Protocol Ch.3.3）──
         _loaded_pf = [f for f in pf if f.get("loaded") and not f.get("load_error")]
         if _loaded_pf:
-            st.divider(); st.markdown("### 💰 現金流估算")
-            _total_inv = sum(f.get("invest_twd",0) or 0 for f in _loaded_pf)
-            _annual_div = 0.0
-            for f in _loaded_pf:
-                _inv = f.get("invest_twd",0) or 0
-                _mj  = f.get("moneydj_raw",{}) or {}
-                _dy  = _mj.get("moneydj_div_yield") or f.get("metrics",{}).get("annual_div_rate",0) or 0
-                try: _annual_div += _inv * float(_dy) / 100
-                except: pass
-            if _total_inv > 0:
-                _monthly = _annual_div / 12
-                cf1, cf2, cf3 = st.columns(3)
-                cf1.metric("總投入金額", f"NT${_total_inv:,.0f}")
-                cf2.metric("預估年配息", f"NT${_annual_div:,.0f}", f"年化 {_annual_div/_total_inv*100:.2f}%")
-                cf3.metric("預估月均配息", f"NT${_monthly:,.0f}")
+            st.divider(); st.markdown("### 💰 以息養股現金流試算")
+            _cf_tab_new, _cf_tab_hold = st.tabs(["🛒 新購試算", "📦 現有持倉"])
+
+            # 各基金配息率查表
+            def _get_dy(f):
+                _mj = f.get("moneydj_raw",{}) or {}
+                try: return float(_mj.get("moneydj_div_yield") or f.get("metrics",{}).get("annual_div_rate",0) or 0)
+                except: return 0.0
+            def _get_nav(f):
+                _mj = f.get("moneydj_raw",{}) or {}
+                try: return float(_mj.get("nav_latest") or f.get("metrics",{}).get("nav") or 0)
+                except: return 0.0
+
+            with _cf_tab_new:
+                st.caption("輸入預計投入金額，推算可購單位數與每月台幣配息預估")
+                _new_invest = st.number_input("預計投入總金額（NTD）", min_value=0, step=10000,
+                    value=1000000, key="cf_new_invest")
+                _new_fx = st.number_input("美元匯率（1 USD = NTD）", min_value=20.0, max_value=40.0,
+                    value=31.5, step=0.1, key="cf_new_fx")
+                if _new_invest > 0:
+                    _n_annual = 0.0; _n_rows = []
+                    for f in _loaded_pf:
+                        _inv_f = f.get("invest_twd", 0) or 0
+                        _ratio = _inv_f / sum(g.get("invest_twd",1) or 1 for g in _loaded_pf) if _loaded_pf else 0
+                        _alloc = _new_invest * _ratio
+                        _dy_f  = _get_dy(f); _nav_f = _get_nav(f)
+                        _units = (_alloc / _new_fx / _nav_f) if (_nav_f > 0 and _new_fx > 0) else 0
+                        _ann_f = _alloc * _dy_f / 100
+                        _n_annual += _ann_f
+                        _n_rows.append({"基金": (f.get("name") or f["code"])[:22],
+                                        "配置(NTD)": f"NT${_alloc:,.0f}",
+                                        "配息率": f"{_dy_f:.2f}%",
+                                        "預估單位數": f"{_units:,.1f}",
+                                        "年配息(NTD)": f"NT${_ann_f:,.0f}"})
+                    st.dataframe(pd.DataFrame(_n_rows), use_container_width=True, hide_index=True)
+                    _n_monthly = _n_annual / 12
+                    nc1, nc2, nc3 = st.columns(3)
+                    nc1.metric("投入金額", f"NT${_new_invest:,.0f}")
+                    nc2.metric("預估年配息", f"NT${_n_annual:,.0f}")
+                    nc3.metric("預估月均配息", f"NT${_n_monthly:,.0f}")
+
+            with _cf_tab_hold:
+                st.caption("輸入已持有單位數，精確計算現金流（依最新淨值 × 配息率 × 匯率）")
+                _hold_fx = st.number_input("美元匯率（1 USD = NTD）", min_value=20.0, max_value=40.0,
+                    value=31.5, step=0.1, key="cf_hold_fx")
+                _h_annual = 0.0; _h_rows = []
+                for f in _loaded_pf:
+                    _nav_f = _get_nav(f); _dy_f = _get_dy(f)
+                    _fn    = (f.get("name") or f["code"])[:22]
+                    _units_key = f"cf_units_{f['code']}"
+                    _units_val = st.number_input(f"持有單位數 — {_fn}", min_value=0.0,
+                        step=100.0, value=0.0, key=_units_key)
+                    _val_usd   = _units_val * _nav_f
+                    _ann_f_usd = _val_usd * _dy_f / 100
+                    _ann_f_twd = _ann_f_usd * _hold_fx
+                    _h_annual += _ann_f_twd
+                    _h_rows.append({"基金": _fn,
+                                    "持有單位": f"{_units_val:,.1f}",
+                                    "淨值(USD)": f"{_nav_f:.4f}" if _nav_f else "—",
+                                    "年配息(USD)": f"{_ann_f_usd:,.2f}",
+                                    "年配息(NTD)": f"NT${_ann_f_twd:,.0f}"})
+                if _h_rows:
+                    st.dataframe(pd.DataFrame(_h_rows), use_container_width=True, hide_index=True)
+                    _h_monthly = _h_annual / 12
+                    hc1, hc2, hc3 = st.columns(3)
+                    hc1.metric("匯率", f"1 USD = NT${_hold_fx}")
+                    hc2.metric("預估年配息", f"NT${_h_annual:,.0f}")
+                    hc3.metric("預估月均配息", f"NT${_h_monthly:,.0f}")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # TAB 4 — 回測
