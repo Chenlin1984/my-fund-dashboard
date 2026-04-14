@@ -64,6 +64,100 @@ my-fund-dashboard/
 
 ---
 
+## §4 核心函式 I/O 定義 — macro_engine & fund_fetcher
+
+### 4.1 macro_engine.py
+
+| 函式 | 輸入 | 輸出 | 說明 |
+|------|------|------|------|
+| `fetch_all_indicators(fred_api_key)` | `str` | `dict[str, dict]` | 抓取 14 項總經指標（FRED + yfinance），每項含 `value/signal/score/series` |
+| `calc_macro_phase(indicators)` | `dict` | `dict` | 加權評分 → `{score:0~10, phase, rec_prob, phase_label, alloc}` |
+| `identify_regime(indicators)` | `dict` | `dict` | 四象限景氣循環辨識 → `{regime, description, quadrant, pmi_dir, cpi_dir}` |
+| `get_market_phase(indicators)` | `dict` | `dict` | Z-Score 二維位階判定 → `{phase, direction, confidence, signals}` |
+| `calc_growth_inflation_axis(indicators)` | `dict` | `dict` | 成長/通膨雙軸 → `{growth_score, inflation_score, quadrant, label}` |
+| `recession_probability(spread_10y3m)` | `float \| None` | `float \| None` | Logistic 回歸估算衰退機率（0~1） |
+| `fetch_tw_market_tpi(fred_api_key)` | `str` | `dict` | 台股三因子 TPI → `{tpi, breadth_z, fii_z, m1b_z, signal, temp_label}` |
+| `detect_systemic_risk(news_items)` | `list[dict]` | `dict` | 新聞關鍵字掃描 → `{level, score, triggers:list, summary}` |
+
+**`calc_macro_phase` 輸出結構：**
+```
+{
+  score:       float,        # 0~10，越高越繁榮
+  phase:       str,          # "高峰"|"擴張"|"復甦"|"衰退"
+  rec_prob:    float,        # 衰退機率 %
+  phase_label: str,          # 含 emoji 的顯示標籤
+  alloc:       dict,         # {stock, bond, cash} 建議配置 %
+  breakdown:   dict,         # 各指標得分明細
+}
+```
+
+**`fetch_all_indicators` 每項指標結構：**
+```
+{
+  name:   str,     # 中文名稱
+  value:  float,   # 最新值
+  prev:   float,   # 上期值
+  unit:   str,     # 單位（%、點等）
+  signal: str,     # "🟢"|"🔴"|"🟡"
+  score:  float,   # 加權得分貢獻
+  weight: float,   # 該指標權重
+  trend:  str,     # "up"|"down"|"flat"
+  date:   str,     # 最新資料日期 YYYY-MM
+  series: pd.Series,  # 歷史序列（供圖表用）
+}
+```
+
+---
+
+### 4.2 fund_fetcher.py
+
+| 函式 | 輸入 | 輸出 | 說明 |
+|------|------|------|------|
+| `parse_moneydj_input(user_input)` | `str` | `dict` | 解析 URL/代碼 → `{code, page_type, full_url, portal}` |
+| `fetch_fund_from_moneydj_url(url)` | `str` | `dict` | 主要入口：從 URL 抓完整基金資料（含 NAV/績效/配息/持股） |
+| `fetch_fund_by_key(full_key, …)` | `str` | `dict` | 從 full_key 取完整分析資料，供組合基金 Tab 使用 |
+| `calc_metrics(s, divs, risk_override)` | `pd.Series, list, dict\|None` | `dict` | 計算 MK 買點（買1/買2/買3）、標準差、年化配息率 |
+| `fetch_performance_wb01(code)` | `str` | `dict` | MoneyDJ wb01 含息報酬率 → `{1Y, 3Y, 5Y, YTD}` (%) |
+| `fetch_risk_metrics(code)` | `str` | `dict` | MoneyDJ wb07 績效評比 → `{risk_table: {一年:{Sharpe, 標準差, …}}}` |
+| `fetch_holdings(code)` | `str` | `dict` | MoneyDJ 持股頁 → `{sector_alloc:list, top_holdings:list}` |
+| `tdcc_search_fund(keyword)` | `str` | `list[dict]` | TDCC 搜尋境外基金 → `[{code, name, agent, isin}]` |
+| `search_moneydj_by_name(keyword)` | `str` | `list[dict]` | MoneyDJ 模糊搜尋 → `[{code, name, url, portal}]` |
+| `fetch_market_news(max_per_feed)` | `int=5` | `list[dict]` | RSS 財經新聞 → `[{title, summary, source, published, url}]` |
+
+**`fetch_fund_from_moneydj_url` / `fetch_fund_by_key` 輸出結構：**
+```
+{
+  fund_name:        str,
+  fund_code:        str,
+  full_key:         str,        # portal:code
+  nav:              float,      # 最新淨值
+  series:           pd.Series,  # 每日/月淨值序列，index=datetime
+  dividends:        list[dict], # [{date, amount, type}]
+  perf:             dict,       # {1Y, 3Y, 5Y, YTD} 含息報酬率 %
+  risk_metrics:     dict,       # wb07 Sharpe/標準差/MaxDD
+  holdings:         dict,       # sector_alloc + top_holdings
+  metrics:          dict,       # calc_metrics() 結果（買點/配息率）
+  investment_target:str,        # 投資標的說明
+  error:            str|None,   # 錯誤訊息
+}
+```
+
+**`calc_metrics` 輸出結構：**
+```
+{
+  nav:           float,   # 最新淨值
+  std_1y:        float,   # 1年年化標準差 %
+  buy1/buy2/buy3:float,   # -1σ/-2σ/-3σ 買點淨值
+  sell1:         float,   # +1σ 停利點
+  pos_label:     str,     # "超跌區"|"合理區"|"高估區"
+  annual_div_rate:float,  # 年化配息率 %
+  ret_1y:        float,   # 1年含息報酬率 %（優先 wb01）
+  std_source:    str,     # "wb07"|"2年計算"|"1年計算"
+}
+```
+
+---
+
 ## §3 資料流向
 
 ### 3.1 全域啟動流
