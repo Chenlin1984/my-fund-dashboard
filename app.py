@@ -267,22 +267,27 @@ with st.sidebar:
     if st.sidebar.button("🔍 測試 Proxy 連線", use_container_width=True,
                          help="從 Streamlit Cloud 直接測試 NAS Proxy 是否可達"):
         import requests as _req
-        # 用純 HTTP endpoint 避免 HTTPS redirect 干擾
-        _test_url = "http://httpbin.org/ip"
+        # 直接測試 MoneyDJ（真正目標），timeout 拉長至 25s
+        _test_targets = [
+            ("MoneyDJ", "https://www.moneydj.com/"),
+            ("TDCC",    "https://openapi.tdcc.com.tw/"),
+        ]
         _pcfg = get_proxy_config()
         with st.sidebar:
             if not _pcfg:
                 st.error("Proxy 未設定，請先填寫 Streamlit Cloud Secrets")
             else:
-                try:
-                    _r = _req.get(_test_url, proxies=_pcfg, timeout=15,
-                                  allow_redirects=False)
-                    if _r.status_code in (200, 301, 302):
-                        st.success(f"✅ Proxy 可達！HTTP {_r.status_code}")
-                    elif _r.status_code == 407:
-                        st.error("❌ 407：帳密錯誤，請確認 NAS 認證設定")
-                    else:
-                        st.warning(f"⚠️ HTTP {_r.status_code}：請確認 NAS 存取規則")
+                for _name, _test_url in _test_targets:
+                    try:
+                        _r = _req.get(_test_url, proxies=_pcfg, timeout=25,
+                                      allow_redirects=False)
+                        if _r.status_code in (200, 301, 302, 403):
+                            st.success(f"✅ {_name} 可達！HTTP {_r.status_code}")
+                        elif _r.status_code == 407:
+                            st.error("❌ 407：帳密錯誤，請確認 NAS 認證設定")
+                            break
+                        else:
+                            st.warning(f"⚠️ {_name} HTTP {_r.status_code}")
                 except _req.exceptions.ProxyError as _e:
                     st.error(f"❌ ProxyError：NAS 無法連線\n```{str(_e)[:200]}```")
                 except _req.exceptions.ConnectTimeout:
