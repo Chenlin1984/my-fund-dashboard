@@ -1,18 +1,18 @@
 # 專案戰情室 (Project State)
-> _最後更新：2026-04-13_
+> _最後更新：2026-04-14_
 
 ## 📌 當前狀態
 - **環境**: Streamlit Cloud + GitHub
-- **進度**: Core Protocol v2.0 部署完成；Requirements.md 已建立
-- **工作分支**: `claude/system-detox-upgrade-ra7Tp`（待 merge 至 main）
+- **進度**: Proxy 全通（MoneyDJ HTTP 200 ✅ / TDCC HTTP 302 ✅）；基金 HTTPS 抓取已修復
+- **工作分支**: `claude/system-detox-upgrade-ra7Tp`（PR #30 待 merge）
 
 ## 🛠️ 檔案結構與核心組件
 
 | 檔案 | 說明 |
 |------|------|
-| `app.py` | Streamlit 主程式（Tab 1~6：總經/基金/組合/回測/AI/ETF）|
+| `app.py` | Streamlit 主程式（Tab 1~6：總經/組合/個別基金/診斷/說明書/ETF）|
 | `macro_engine.py` | 總經引擎：FRED 10 指標 + VIX/TWII + CBC M1B/M2 |
-| `fund_fetcher.py` | 基金抓取 v6.24：MoneyDJ/TDCC/FundClear + NAS Proxy + NAV 快取 |
+| `fund_fetcher.py` | 基金抓取 v6.24+：MoneyDJ/TDCC/FundClear + NAS Proxy + SSL fix |
 | `ai_engine.py` | Gemini 2.5 Flash：四章 AI 報告 |
 | `portfolio_engine.py` | 六因子評分 + MDD + 壓力測試 + Core/Satellite 分類 |
 | `backtest_engine.py` | CAGR / Sharpe / Sortino / Calmar / MDD 回測 |
@@ -25,12 +25,23 @@
 | `scripts/fetch_nav_cache.py` | GitHub Actions 每日 NAV 快取腳本 |
 | `requirements.txt` | Python 套件依賴清單 |
 
+## 🔑 Proxy 設定（已完成）
+
+| 項目 | 狀態 |
+|------|------|
+| NAS Proxy 帳號 `streamlit_proxy` | ✅ 已建立、密碼已重設 |
+| Router Port Forwarding TCP 3128 | ✅ 已設定（外→NAS 內網）|
+| Synology Access Control 7 CIDR | ✅ 覆蓋所有公網 IP |
+| Streamlit Cloud Secrets `PROXY_URL` | ✅ 已填入 |
+| 連線測試 MoneyDJ HTTP 200 | ✅ |
+| 連線測試 TDCC HTTP 302 | ✅ |
+
 ## 🐞 待辦與已知 Bug
 
 | 優先度 | 項目 | 狀態 |
 |--------|------|------|
-| 🔴 高 | NAS Proxy 人工設定（5 步驟）→ 影響 MoneyDJ 資料抓取 | 待用戶操作 |
-| 🔴 高 | Streamlit Cloud Secrets `[proxy]` 填寫完整帳密 | 待用戶操作 |
+| 🔴 高 | PR #30 merge → 基金 HTTPS 資料抓取正式上線 | ⏳ 待 merge |
+| 🟡 中 | merge 後在 Tab 3 輸入 `tlzf9` 驗收基金資料是否顯示 | 待測試 |
 | 🟡 中 | `pages/1` 的 `dict[str, list[str]]` 型別標注：確認 Python 3.9 相容性 | 待確認 |
 | 🟢 低 | 台股法人籌碼：接入 FinMind API | 未來功能 |
 | 🟢 低 | 郭俊宏紅燈 `dividend_safety()` UI 觸發確認 | 待確認 |
@@ -38,9 +49,17 @@
 ## 📋 PR 歷史
 | PR | 標題 | 狀態 |
 |----|------|------|
-| #26 | CLAUDE.md v2.0 + STATE.md 全面更新 | ⏳ 待 merge |
+| #30 | fix: proxy 模式下補回 HTTPS 基金資料抓取支援 | ⏳ 待 merge |
+| #26 | CLAUDE.md v2.0 + STATE.md 全面更新 | ✅ merged |
 | #25 | Proxy 狀態指示器 + 測試連線按鈕 | ✅ merged |
 | #24 | Python 3.9 型別相容修復 | ✅ merged |
 | #21 | NAS Proxy 全站注入 v6.24 | ✅ merged |
 | #20 | ETF tab6 + pages/ 三分頁 | ✅ merged |
 | #18 | Sharpe rf / 折溢價 / VCP 訊號 | ✅ merged |
+
+## 🔧 技術備忘（Proxy SSL 修正原理）
+- MoneyDJ 所有資料端點均為 HTTPS（`tcbbankfund.moneydj.com` 等）
+- 透過 Squid Proxy 的 CONNECT 隧道時，SSL 憑證驗證可能失敗（SSLCertVerificationError）
+- 修正：`_ssl_verify()` — proxy 模式回傳 `False`，直連回傳 `True`
+- `urllib3.disable_warnings` 抑制 InsecureRequestWarning
+- 所有 `requests.get/post` 已加上 `verify=_ssl_verify()`（共 10 個呼叫點）
