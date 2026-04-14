@@ -205,7 +205,7 @@ def _quartile_check(peer_compare: dict, risk_table: dict) -> dict:
 # ══════════════════════════════════════════════════════
 # TABS
 # ══════════════════════════════════════════════════════
-tab1, tab2, tab3, tab4 = st.tabs(["🌐 總經","🔍 單一基金","📊 組合基金","🔬 回測"])
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["🌐 總經","🔍 單一基金","📊 組合基金","🔬 回測","🔬 資料診斷","📖 說明書"])
 
 # ══════════════════════════════════════════════════════
 # TAB 1 — 總經
@@ -1088,3 +1088,533 @@ with tab4:
         st.info("設定完成後按「▶ 執行回測」開始分析。")
     else:
         st.info("請先在上方選取基金，再執行回測。")
+
+# ══════════════════════════════════════════════════════
+# TAB 5 — 資料診斷
+# ══════════════════════════════════════════════════════
+with tab5:
+    _d5_hdr, _d5_btn = st.columns([3, 1])
+    with _d5_hdr:
+        st.markdown("## 🔬 資料診斷")
+        st.caption("確認所有數據來源是否成功下載，方便排查問題")
+    with _d5_btn:
+        st.markdown("<div style='margin-top:20px'></div>", unsafe_allow_html=True)
+        if st.button("🔄 重新載入總經", key="btn_d5_refresh"):
+            st.session_state.macro_done = False
+            st.rerun()
+
+    # ── Section 1: 總經指標健康燈號 ──────────────────────────────
+    st.markdown("### 🌐 總經指標（FRED / yfinance）")
+    _d5_ind = st.session_state.get("indicators", {})
+    _d5_phase = st.session_state.get("phase_info", {})
+
+    _D5_EXPECTED = [
+        ("PMI",          "ISM製造業PMI",        "FRED",     "NAPM",           ">50擴張"),
+        ("CPI",          "CPI年增率",            "FRED",     "CPIAUCSL",       "<2%理想"),
+        ("UNEMPLOYMENT", "失業率",               "FRED",     "UNRATE",         "<4.5%"),
+        ("YIELD_10Y2Y",  "殖利率利差(10Y-2Y)",   "計算",     "DGS10-DGS2",     "倒掛=衰退"),
+        ("YIELD_10Y3M",  "殖利率利差(10Y-3M)",   "計算",     "DGS10-TB3MS",    "最強衰退指標"),
+        ("HY_SPREAD",    "高收益債利差",          "FRED",     "BAMLH0A0HYM2",   "<4%樂觀"),
+        ("M2",           "M2貨幣供給YoY",        "FRED",     "M2SL",           ">5%寬鬆"),
+        ("FED_BS",       "Fed資產負債表YoY",     "FRED",     "WALCL",          "擴表=利多"),
+        ("FED_RATE",     "聯準會利率",           "FRED",     "FEDFUNDS",       "升/降息"),
+        ("PPI",          "PPI生產者物價YoY",     "FRED",     "PPIACO",         "通膨上游"),
+        ("VIX",          "VIX恐慌指數",          "yfinance", "^VIX",           "<18平靜"),
+        ("DXY",          "美元指數",             "yfinance", "DX-Y.NYB",       "月漲跌"),
+        ("ADL",          "市場廣度RSP/SPY",      "yfinance", "RSP/SPY",        "多頭健康度"),
+        ("COPPER",       "銅博士月漲跌",         "yfinance", "HG=F",           "景氣領先"),
+    ]
+
+    _d5_cols_hdr = st.columns([2, 2, 1, 2, 2, 1])
+    for _d5_ch, _d5_hd in zip(_d5_cols_hdr,
+                               ["指標代碼", "中文名稱", "來源", "Ticker/計算式", "數值", "狀態"]):
+        _d5_ch.markdown(
+            f"<div style='font-size:11px;color:#888;font-weight:700'>{_d5_hd}</div>",
+            unsafe_allow_html=True)
+    st.markdown("<hr style='margin:4px 0;border-color:#30363d'>", unsafe_allow_html=True)
+
+    _d5_ok = _d5_fail = _d5_na = 0
+    for _d5_key, _d5_name, _d5_src, _d5_ticker, _d5_note in _D5_EXPECTED:
+        _d5_d   = _d5_ind.get(_d5_key, {})
+        _d5_val = _d5_d.get("value") if _d5_d else None
+        _d5_err = _d5_d.get("error", "") if _d5_d else ""
+        if _d5_val is not None and str(_d5_val) != "" and _d5_val == _d5_val:
+            _d5_ok += 1
+            _d5_ic, _d5_vc = "✅", "#00c853"
+            _d5_unit = _d5_d.get("unit", "") or ""
+            _d5_date = f" ({_d5_d.get('date','')})" if _d5_d.get("date") else ""
+            try:
+                _d5_vstr = f"{float(_d5_val):.2f}{_d5_unit}{_d5_date}"
+            except Exception:
+                _d5_vstr = str(_d5_val)[:14]
+        elif _d5_err:
+            _d5_fail += 1
+            _d5_ic, _d5_vc = "❌", "#f44336"
+            _d5_vstr = str(_d5_err)[:35]
+        elif not _d5_ind:
+            _d5_na += 1
+            _d5_ic, _d5_vc = "⬜", "#555"
+            _d5_vstr = "尚未載入"
+        else:
+            _d5_na += 1
+            _d5_ic, _d5_vc = "⚠️", "#ff9800"
+            _d5_vstr = "⚠️ 無資料"
+
+        _d5_row = st.columns([2, 2, 1, 2, 2, 1])
+        _d5_row[0].markdown(f"<code style='font-size:11px'>{_d5_key}</code>",
+                            unsafe_allow_html=True)
+        _d5_row[1].markdown(f"<span style='font-size:11px;color:#ccc'>{_d5_name}</span>",
+                            unsafe_allow_html=True)
+        _d5_row[2].markdown(f"<span style='font-size:10px;color:#888'>{_d5_src}</span>",
+                            unsafe_allow_html=True)
+        _d5_row[3].markdown(f"<code style='font-size:9px;color:#555'>{_d5_ticker}</code>",
+                            unsafe_allow_html=True)
+        _d5_row[4].markdown(
+            f"<span style='font-size:11px;color:{_d5_vc}'>{_d5_vstr}</span>",
+            unsafe_allow_html=True)
+        _d5_row[5].markdown(
+            f"<span style='font-size:14px'>{_d5_ic}</span>"
+            f"<span style='font-size:9px;color:#555;display:block'>{_d5_note}</span>",
+            unsafe_allow_html=True)
+
+    # 完整率進度條
+    _d5_total = len(_D5_EXPECTED)
+    _d5_pct   = round(_d5_ok / _d5_total * 100) if _d5_total else 0
+    _d5_bar_c = "#00c853" if _d5_pct >= 80 else ("#ff9800" if _d5_pct >= 50 else "#f44336")
+    _d5_upd   = st.session_state.get("macro_last_update")
+    _d5_upd_s = _d5_upd.strftime("%H:%M") if hasattr(_d5_upd, "strftime") else "未更新"
+    st.markdown(
+        f"<div style='background:#1a1f2e;border-radius:8px;padding:10px 14px;margin-top:8px'>"
+        f"<div style='display:flex;justify-content:space-between;font-size:12px;margin-bottom:6px'>"
+        f"<span>"
+        f"<span style='color:#00c853'>✅ 成功 {_d5_ok}</span>　"
+        f"<span style='color:#f44336'>❌ 失敗 {_d5_fail}</span>　"
+        f"<span style='color:#ff9800'>⚠️ 缺漏 {_d5_na}</span>　"
+        f"<span style='color:#888'>/ 共 {_d5_total} 項</span>"
+        f"</span>"
+        f"<span style='color:#888;font-size:11px'>最後更新：{_d5_upd_s}</span>"
+        f"</div>"
+        f"<div style='height:8px;background:#0d1117;border-radius:4px;overflow:hidden'>"
+        f"<div style='height:100%;width:{_d5_pct}%;background:{_d5_bar_c};border-radius:4px'></div>"
+        f"</div>"
+        f"<div style='font-size:10px;color:{_d5_bar_c};margin-top:3px;text-align:right'>"
+        f"資料完整率 {_d5_pct}%</div>"
+        f"</div>", unsafe_allow_html=True)
+
+    if _d5_ind and not _d5_ind.get("PMI"):
+        st.warning("⚠️ **PMI** 暫無資料 — FRED NAPM 系列通常延遲 1-2 個月發布，非抓取錯誤。")
+
+    if _d5_phase:
+        st.markdown(
+            f"<div style='font-size:12px;color:#888;margin-top:6px'>"
+            f"景氣位階：<b style='color:#e6edf3'>{_d5_phase.get('phase','?')}</b>　"
+            f"評分：<b style='color:#e6edf3'>{_d5_phase.get('score','?')}/10</b>　"
+            f"衰退率：<b style='color:#e6edf3'>{_d5_phase.get('rec_prob','?')}%</b>"
+            f"</div>", unsafe_allow_html=True)
+
+    st.divider()
+
+    # ── Section 2: API Key 狀態 ───────────────────────────────────
+    st.markdown("### 🔑 API 金鑰狀態")
+    _d5_k1, _d5_k2 = st.columns(2)
+    with _d5_k1:
+        _d5_fred_ok = bool(FRED_KEY)
+        st.markdown(
+            f"<div style='background:#1a1f2e;border-radius:8px;padding:12px'>"
+            f"<div style='font-size:11px;color:#888'>FRED API Key</div>"
+            f"<div style='font-size:16px;font-weight:700;"
+            f"color:{'#00c853' if _d5_fred_ok else '#f44336'}'>"
+            f"{'✅ 已設定' if _d5_fred_ok else '❌ 未填寫'}</div>"
+            f"<div style='font-size:10px;color:#555'>"
+            f"{'...' + FRED_KEY[-6:] if _d5_fred_ok and len(FRED_KEY) > 6 else '請在 secrets.toml 填入'}"
+            f"</div></div>", unsafe_allow_html=True)
+    with _d5_k2:
+        _d5_gem_ok = bool(GEMINI_KEY)
+        st.markdown(
+            f"<div style='background:#1a1f2e;border-radius:8px;padding:12px'>"
+            f"<div style='font-size:11px;color:#888'>Gemini API Key</div>"
+            f"<div style='font-size:16px;font-weight:700;"
+            f"color:{'#00c853' if _d5_gem_ok else '#f44336'}'>"
+            f"{'✅ 已設定' if _d5_gem_ok else '❌ 未填寫'}</div>"
+            f"<div style='font-size:10px;color:#555'>"
+            f"{'...' + GEMINI_KEY[-6:] if _d5_gem_ok and len(GEMINI_KEY) > 6 else '請在 secrets.toml 填入'}"
+            f"</div></div>", unsafe_allow_html=True)
+
+    st.divider()
+
+    # ── Section 3: 基金逐筆診斷 ───────────────────────────────────
+    st.markdown("### 📊 基金資料診斷")
+    _d5_pf   = st.session_state.get("portfolio_funds", []) or []
+    _d5_cf   = st.session_state.get("current_fund")
+
+    # 合併組合基金 + 個別基金（去重）
+    _d5_list = list(_d5_pf)
+    if _d5_cf:
+        _d5_cf_code = _d5_cf.get("fund_code", "") or _d5_cf.get("full_key", "")
+        if not any(f.get("code") == _d5_cf_code for f in _d5_list):
+            _d5_list.append({
+                "code": _d5_cf_code,
+                "name": _d5_cf.get("fund_name", "") or _d5_cf_code,
+                "loaded": True,
+                "metrics": _d5_cf.get("metrics", {}),
+                "moneydj_raw": _d5_cf,
+                "dividends": _d5_cf.get("dividends", []),
+                "series": _d5_cf.get("series"),
+                "_source": "個別基金分析",
+            })
+
+    if not _d5_list:
+        st.info("尚未載入任何基金。請至「單一基金」或「組合基金」Tab 載入後再查看。")
+    else:
+        def _d5_cell(col, label, value, ok_cond=True, fmt=None):
+            _empty = (value is None or value == "" or
+                      (isinstance(value, (dict, list)) and not value))
+            if _empty:
+                _ic, _vc, _vs = "⚠️", "#ff9800", "無資料"
+            else:
+                try:
+                    _ic  = "✅" if bool(ok_cond) else "⚠️"
+                    _vc  = "#00c853" if bool(ok_cond) else "#ff9800"
+                    _vs  = fmt(value) if fmt else str(value)[:60]
+                except Exception:
+                    _ic, _vc, _vs = "⚠️", "#ff9800", str(value)[:30]
+            col.markdown(
+                f"<div style='background:#1a1f2e;border-radius:6px;padding:6px 8px'>"
+                f"<div style='font-size:9px;color:#666'>{label}</div>"
+                f"<div style='font-size:13px;color:{_vc};font-weight:700'>{_ic} {_vs}</div>"
+                f"</div>", unsafe_allow_html=True)
+
+        for _d5_fd in _d5_list:
+            _d5_code  = _d5_fd.get("code", "?")
+            _d5_fname = _d5_fd.get("name", "") or _d5_code
+            _d5_mj    = _d5_fd.get("moneydj_raw", {}) or {}
+            _d5_m     = _d5_fd.get("metrics", {}) or {}
+            _d5_err   = _d5_fd.get("error", "") or _d5_mj.get("error", "")
+            _d5_nav   = _d5_m.get("nav") or _d5_mj.get("nav")
+            _d5_adr   = _d5_mj.get("moneydj_div_yield") or _d5_m.get("annual_div_rate")
+            _d5_perf  = _d5_mj.get("perf", {}) or {}
+            _d5_risk  = (_d5_mj.get("risk_metrics", {}) or {})
+            _d5_r1y   = (_d5_risk.get("risk_table") or {}).get("一年", {}) or {}
+            _d5_divs  = _d5_fd.get("dividends") or _d5_mj.get("dividends") or []
+            _d5_divs  = _d5_divs if isinstance(_d5_divs, list) else []
+            _d5_hold  = (_d5_mj.get("holdings") or {})
+            _d5_sects = _d5_hold.get("sector_alloc", []) or []
+            _d5_tops  = _d5_hold.get("top_holdings", []) or []
+
+            _d5_raw_s = _d5_fd.get("series") or _d5_mj.get("series")
+            try:
+                import pandas as _pd_d5
+                _d5_slen = len(_d5_raw_s) if isinstance(_d5_raw_s, _pd_d5.Series) else 0
+            except Exception:
+                _d5_slen = 0
+
+            _d5_ok_icon = "✅" if _d5_fd.get("loaded") and not _d5_err else ("❌" if _d5_err else "⬜")
+            with st.expander(f"{_d5_ok_icon} {_d5_fname[:35]} ({_d5_code})",
+                             expanded=bool(_d5_err)):
+                # Row 1: NAV / 配息率 / 1Y報酬 / 淨值筆數
+                _r1 = st.columns(4)
+                _d5_cell(_r1[0], "最新淨值 NAV",   _d5_nav,
+                         ok_cond=(_d5_nav is not None and float(_d5_nav or 0) > 0),
+                         fmt=lambda v: f"{float(v):.4f}")
+                _d5_cell(_r1[1], "年化配息率",      _d5_adr,
+                         ok_cond=(_d5_adr is not None and float(_d5_adr or 0) > 0),
+                         fmt=lambda v: f"{float(v):.2f}%")
+                _d5_cell(_r1[2], "1Y含息報酬",      _d5_perf.get("1Y"),
+                         ok_cond=(_d5_perf.get("1Y") is not None),
+                         fmt=lambda v: f"{v:.2f}%")
+                _d5_cell(_r1[3], "淨值歷史筆數",    _d5_slen if _d5_slen > 0 else None,
+                         ok_cond=(_d5_slen >= 30),
+                         fmt=lambda v: f"{v} 筆")
+                st.markdown("<div style='margin:4px 0'></div>", unsafe_allow_html=True)
+                # Row 2: 配息筆數 / 標準差 / Sharpe / MoneyDJ wb01
+                _r2 = st.columns(4)
+                _d5_cell(_r2[0], "配息記錄筆數",    len(_d5_divs) if _d5_divs else None,
+                         ok_cond=(len(_d5_divs) >= 1),
+                         fmt=lambda v: f"{v} 筆")
+                _d5_cell(_r2[1], "標準差(1Y)",      _d5_r1y.get("標準差"),
+                         ok_cond=(_d5_r1y.get("標準差") is not None),
+                         fmt=lambda v: f"{v}%")
+                _d5_cell(_r2[2], "Sharpe(1Y)",      _d5_r1y.get("Sharpe"),
+                         ok_cond=(_d5_r1y.get("Sharpe") is not None),
+                         fmt=lambda v: str(v))
+                _d5_cell(_r2[3], "wb01報酬資料",    _d5_perf.get("1Y"),
+                         ok_cond=(_d5_perf.get("1Y") is not None),
+                         fmt=lambda v: "已取得 ✓")
+                st.markdown("<div style='margin:4px 0'></div>", unsafe_allow_html=True)
+                # Row 3: holdings
+                _r3 = st.columns(4)
+                _d5_cell(_r3[0], "holdings物件",    _d5_hold or None,
+                         ok_cond=bool(_d5_hold),
+                         fmt=lambda v: "有資料 ✓")
+                _d5_cell(_r3[1], "產業配置筆數",    len(_d5_sects) if _d5_sects else None,
+                         ok_cond=(len(_d5_sects) >= 3),
+                         fmt=lambda v: f"{v} 項")
+                _d5_cell(_r3[2], "前10大持股",      len(_d5_tops) if _d5_tops else None,
+                         ok_cond=(len(_d5_tops) >= 5),
+                         fmt=lambda v: f"{v} 檔")
+                _d5_cell(_r3[3], "基本資料",        _d5_mj.get("investment_target"),
+                         ok_cond=bool(_d5_mj.get("investment_target")),
+                         fmt=lambda v: "已取得 ✓")
+
+                st.markdown(
+                    f"<span style='font-size:10px;color:#555'>"
+                    f"來源：{_d5_fd.get('_source','投資組合')} | "
+                    f"is_core: {_d5_fd.get('is_core','?')} | "
+                    f"currency: {_d5_fd.get('currency', _d5_mj.get('currency','?'))}"
+                    f"</span>", unsafe_allow_html=True)
+                if _d5_err:
+                    st.error(f"❌ 錯誤：{str(_d5_err)[:200]}")
+
+# ══════════════════════════════════════════════════════
+# TAB 6 — 說明書
+# ══════════════════════════════════════════════════════
+with tab6:
+    st.markdown("## 📖 系統說明書 — 公式與判斷標準完整說明")
+    st.caption("解釋所有評分模型、公式與指標的計算方式，方便進階使用者理解決策邏輯。")
+
+    _t6 = st.tabs([
+        "🧮 1. Macro Score",
+        "🌤️ 2. 景氣天氣",
+        "🏆 3. 六因子評分",
+        "🔴 4. 吃本金診斷",
+        "⚖️ 5. 再平衡公式",
+        "🇹🇼 6. 台股TPI",
+        "🛡️⚡ 7. 核心衛星",
+        "🔄 8. 汰弱留強",
+    ])
+
+    # ── 1. Macro Score ────────────────────────────────────────────
+    with _t6[0]:
+        st.markdown("### 🧮 AI Macro Score — 加權景氣評分")
+        st.markdown("""
+**公式：**
+```
+Macro_Score = Σ(wᵢ × sᵢ) / Σ(wᵢ)  →  正規化到 0~10
+
+score_normalized = (earned_score + total_weight) / (2 × total_weight) × 10
+```
+""")
+        st.dataframe(pd.DataFrame([
+            ["殖利率利差 10Y-2Y", "DGS10-DGS2",   2,   "±2",   "倒掛(<0)=-2，翻正=+2，>0.5=+1"],
+            ["殖利率利差 10Y-3M", "DGS10-TB3MS",  2,   "±2",   "倒掛=-2，翻正=+3（降息確認）"],
+            ["PMI 製造業",        "NAPM",          2,   "±2",   ">50=+2，45~50=-1，<45=-2"],
+            ["HY 信用利差",       "BAMLH0A0HYM2", 2,   "±2",   "<4%=+2，4~6%=0，>6%=-2"],
+            ["M2 流動性",         "M2SL",          1,   "±1",   ">5%=+1，<0%=-1"],
+            ["市場廣度 RSP/SPY",  "RSP/SPY",       1,   "±1",   "月漲>0.5%=+1，月跌>1%=-1"],
+            ["DXY 美元指數",      "DX-Y.NYB",      1,   "±1",   "月跌>1%=+1（弱美元利多），月漲>2%=-1"],
+            ["Fed 資產負債表",    "WALCL",          1,   "±1",   "擴表>5%=+1，縮表<-5%=-1"],
+            ["VIX 恐慌指數",      "^VIX",           1,   "±1",   "<18=+1（平靜），>30=-1（恐慌）"],
+            ["CPI 通膨率",        "CPIAUCSL",      0.5, "±0.5", "1~2.5%=+0.5，>4%=-0.5"],
+            ["Fed Rate",          "FEDFUNDS",      0.5, "±0.5", "降息=+0.5，>5%=-0.5"],
+            ["失業率",             "UNRATE",        0.5, "±0.5", "<4.5%=+0.5，>6%=-1"],
+            ["PPI 生產者物價",    "PPIACO",         0.5, "±0.5", "0~3%=+0.5，>5%=-0.5"],
+            ["銅博士",             "HG=F",           0.5, "±0.5", "月漲>2%=+0.5，月跌>5%=-0.5"],
+        ], columns=["指標", "FRED/Ticker", "權重(w)", "分值範圍", "評分邏輯"]),
+            use_container_width=True, hide_index=True)
+        st.markdown("""
+**景氣位階對應：**
+| Score | 位階 | 建議股債現金 |
+|-------|------|------------|
+| 8~10  | 🔴 高峰 | 股 35% / 債 45% / 現金 20% |
+| 5~7   | 🟢 擴張 | 股 60% / 債 30% / 現金 10% |
+| 3~4   | 🔵 復甦 | 股 40% / 債 40% / 現金 20% |
+| 0~2   | 🟡 衰退 | 股 20% / 債 50% / 現金 30% |
+""")
+
+    # ── 2. 景氣天氣 ───────────────────────────────────────────────
+    with _t6[1]:
+        st.markdown("### 🌤️ 總經天氣預報 — Score → 天氣映射")
+        st.markdown("""
+**公式：**
+```
+Score ≥ 7  → ☀️ 晴天（建議股票為主）
+4 ≤ Score < 7 → ⛅ 多雲（均衡配置）
+Score < 4  → ⛈️ 暴雨（防禦為主）
+```
+
+| 天氣 | Score 範圍 | 建議配置 | 行動 |
+|------|----------|---------|------|
+| ☀️ 晴天 | ≥ 7 | 股多債少 | 增加衛星部位，持有成長型基金 |
+| ⛅ 多雲 | 4~6 | 股債均衡 | 維持核心配置，輕倉衛星 |
+| ⛈️ 暴雨 | < 4 | 債多現金多 | 啟動防禦，核心配息資產優先 |
+""")
+
+    # ── 3. 六因子評分 ─────────────────────────────────────────────
+    with _t6[2]:
+        st.markdown("### 🏆 基金六因子評分（Fund Factor Model）")
+        st.markdown("""
+**公式：**
+```
+Fund_Score = Σ(因子得分ᵢ × 權重ᵢ) / Σ(權重ᵢ)    範圍：0~100
+```
+""")
+        st.dataframe(pd.DataFrame([
+            ["1. Sharpe Ratio",  "每單位風險的超額報酬",       "25%",
+             "min(max((Sharpe+1)/2×100, 0), 100)", "Sharpe=-1→0分；=0→50分；=+1→100分",  "MoneyDJ wb07"],
+            ["2. Sortino Ratio", "只懲罰下行波動",             "15%",
+             "min(max((Sortino+1)/2×100, 0), 100)", "同 Sharpe 但只計負報酬標準差",       "calc_metrics()"],
+            ["3. Max Drawdown",  "歷史最慘跌幅（越小越好）",   "20%",
+             "min(max((1-|MaxDD|/30)×100, 0), 100)", "MaxDD=0%→100分；=-30%→0分",        "淨值歷史計算"],
+            ["4. Calmar Ratio",  "年化報酬/最大回撤",          "10%",
+             "min(max(Calmar/2×100, 0), 100)", "Calmar=0→0分；=2→100分",                 "calc_metrics()"],
+            ["5. Alpha",         "含息報酬率 - 配息年化率",    "20%",
+             "min(max((Alpha+10)/20×100, 0), 100)", "Alpha=-10%→0分；=0→50分；=+10%→100分", "wb01-wb05"],
+            ["6. 費用率",        "年度管理費用（越低越好）",   "10%",
+             "min(max((3-費用率)/3×100, 0), 100)", "0%→100分；3%→0分",                   "MoneyDJ 基金資料"],
+        ], columns=["因子", "說明", "權重", "計算公式", "數值對應", "資料來源"]),
+            use_container_width=True, hide_index=True)
+        st.markdown("""
+**Grade 等級：**
+| Score | Grade | 說明 |
+|-------|-------|------|
+| 75~100 | **A** | 優秀：風險調整後表現卓越 |
+| 55~74  | **B** | 良好：整體表現在平均以上 |
+| 40~54  | **C** | 普通：考慮是否汰換 |
+| 0~39   | **D** | 待改善：建議評估替代標的 |
+
+⚠️ 缺乏資料的因子不計入加權總分，最少需 Sharpe + Alpha 兩項。
+""")
+
+    # ── 4. 吃本金診斷 ─────────────────────────────────────────────
+    with _t6[3]:
+        st.markdown("### 🔴 吃本金診斷（Capital Return Detection）")
+        st.markdown("""
+**MK 以息養股核心公式：**
+```
+吃本金判斷：含息總報酬(wb01 1Y) < 年化配息率(wb05)
+```
+
+**資料來源優先序：**
+| 數據 | 優先來源 | 備援 |
+|------|---------|------|
+| 含息報酬率 | MoneyDJ **wb01**（含息實績） | 淨值漲跌% + 配息率 |
+| 年化配息率 | MoneyDJ **wb05**（官方值） | 自算：近12月配息/平均淨值 |
+
+**燈號：**
+- 🟢 **健康**：含息報酬率 ≥ 配息率（有淨值成長作支撐）
+- 🟡 **警示**：含息報酬率略低於配息率（正在侵蝕本金）
+- 🔴 **吃本金**：含息報酬率 << 配息率（配息主要來自本金返還）
+
+**實例：**
+```
+安聯收益成長：含息1Y = +5.2%，配息率 = 9.6%
+  → 差距 -4.4%，代表每年淨值被侵蝕 4.4%
+  → 繼續持有10年後，本金將大幅減損
+```
+""")
+
+    # ── 5. 再平衡公式 ─────────────────────────────────────────────
+    with _t6[4]:
+        st.markdown("### ⚖️ 再平衡公式（One-Click Rebalance）")
+        st.markdown("""
+**MK 再平衡差額計算：**
+```
+Action_i = (Total_Portfolio × Target_Weight_i) - Current_Value_i
+```
+
+**觸發條件（MK 標準）：**
+| 偏離程度 | 動作 |
+|---------|------|
+| < 5%   | ✅ 配置正常，無需再平衡 |
+| 5~10%  | ⚠️ 建議再平衡（下次配息時執行） |
+| > 10%  | 🚨 必須執行再平衡 |
+
+**白話文行動指南生成邏輯：**
+```
+偏移方向 = 目前核心% - 目標核心%
+
+> 0 → 核心太多：從「最大衛星基金」贖回 ΔNT$，轉入「最小核心基金」
+< 0 → 衛星太多：從「最大核心基金」獲利了結 ΔNT$，轉入「最小衛星基金」
+```
+偏離金額 = |偏移%| × 總投入金額
+""")
+
+    # ── 6. 台股TPI ────────────────────────────────────────────────
+    with _t6[5]:
+        st.markdown("### 🇹🇼 台灣市場轉折點指標（TPI v15.1）")
+        st.markdown("""
+**公式：**
+```
+TPI = Z(Breadth) × 0.4 + Z(FII) × 0.3 + Z(M1B/M2) × 0.3
+```
+
+| 因子 | 說明 | 資料來源 |
+|------|------|---------|
+| **Z(Breadth)** 市場寬度 | (上漲家數-下跌家數)/(上漲+下跌)×100 ÷20 | TWSE MI_INDEX |
+| **Z(FII)** 外資淨買 | 外資買超-賣超（元）÷50億 | FinMind API |
+| **Z(M1B/M2)** 貨幣動能 | M1B成長率 vs M2成長率交叉 | 央行 ms1.json |
+
+**水溫對應：**
+| TPI | 水溫 | 訊號 | 建議行動 |
+|-----|------|------|---------|
+| ≥ +1.5 | 🥵 沸點 | 🔴 | 上漲家數銳減，啟動獲利了結 |
+| +0.5~+1.5 | 🌡️ 溫熱 | 🟡 | 持續觀察，衛星設停利 |
+| -0.5~+0.5 | ⚖️ 常溫 | ⚪ | 維持配置，觀察變化 |
+| -1.5~-0.5 | 🌡️ 偏冷 | 🟡 | 外資轉弱，降低台股部位 |
+| ≤ -1.5 | 🥶 冰點 | 🟢 | 散戶絕望期，分批建倉訊號 |
+
+⚠️ TPI 為輔助參考指標，需配合景氣位階綜合判斷。
+""")
+
+    # ── 7. 核心衛星分類 ──────────────────────────────────────────
+    with _t6[6]:
+        st.markdown("### 🛡️⚡ 核心/衛星分類邏輯")
+        st.markdown("**優先序：手動設定 > 關鍵字比對 > 預設（衛星）**")
+        st.dataframe(pd.DataFrame([
+            ["🛡️ 核心", "債、收益、配息、平衡、高息、公用、多元、income、bond、dividend、balanced"],
+            ["⚡ 衛星", "AI、科技、半導體、成長、主題、印度、越南、生技、醫療、能源、tech、growth"],
+        ], columns=["分類", "觸發關鍵字（基金名稱含有任一）"]),
+            use_container_width=True, hide_index=True)
+        st.markdown("""
+**β 係數分類：**
+| β 值 | 標籤 | 建議比重 |
+|------|------|---------|
+| < 0.8 | 🛡️ 定海神針 | 核心部位 60~80% |
+| 0.8~1.2 | ⚖️ 市場同步 | 視景氣位階調整 |
+| > 1.2 | 🚀 衝鋒陷陣 | 衛星部位 10~20% |
+
+**MK 核心/衛星比例目標（預設 80/20）：**
+```
+核心資產：提供穩定現金流（每月配息），作為「養」衛星的資金來源
+衛星資產：追求價差成長，由核心配息「養」，不動用本金
+```
+偏離 >5% → ⚠️ 建議再平衡　|　偏離 >10% → 🚨 必須執行
+""")
+
+    # ── 8. 汰弱留強評分 ──────────────────────────────────────────
+    with _t6[7]:
+        st.markdown("### 🔄 汰弱留強評分（Security Ranking）")
+        st.markdown("""
+**核心邏輯：定期汰換績效落後的基金，換入同類前段班**
+
+**觸發條件（任一滿足即亮警示）：**
+| 條件 | 建議行動 |
+|------|---------|
+| 同類四分位連續 ≥2季 第3或4分位 | ⚠️ 追蹤；第3季仍落後 → 換 |
+| 同類四分位連續 ≥2季 第4分位（後25%）| 🚨 跨行轉存至前25%標的 |
+| 吃本金連續發生（含息報酬 < 配息率）| 🔴 優先汰換 |
+| MaxDrawdown 超過同類平均 1.5x | ⚠️ 評估是否替換 |
+
+**汰弱留強評分公式（60分及格）：**
+```
+汰弱分數 = 含息報酬率 × 40%
+         + Sharpe 比率 × 30%
+         + (費用率 vs 同類均值) × 30%
+
+< 60分 → 考慮汰換　|　≥ 75分 → 保留
+```
+
+**四分位等級：**
+| 等級 | 排名 | 含義 |
+|------|------|------|
+| 第1四分位 | 前25% | 同類最強，優先持有 |
+| 第2四分位 | 26~50% | 中上，繼續持有 |
+| 第3四分位 | 51~75% | 中下，開始觀察 |
+| 第4四分位 | 後25% | 最弱，考慮汰換 |
+
+**實際操作原則：**
+1. 每季（3個月）看一次同類排名
+2. 連續2季後25% → 啟動汰換計畫（給它一次機會）
+3. 找好替換標的後，在「買點」時換（避免在高點換進）
+4. 核心資產不輕易換（穩定配息 > 短期績效排名）
+""")
