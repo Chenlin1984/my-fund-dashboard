@@ -1239,3 +1239,128 @@ with tab5:
             f"<div style='font-size:10px;color:#555'>"
             f"{'...' + GEMINI_KEY[-6:] if _d5_gem_ok and len(GEMINI_KEY) > 6 else '請在 secrets.toml 填入'}"
             f"</div></div>", unsafe_allow_html=True)
+
+    st.divider()
+
+    # ── Section 3: 基金逐筆診斷 ───────────────────────────────────
+    st.markdown("### 📊 基金資料診斷")
+    _d5_pf   = st.session_state.get("portfolio_funds", []) or []
+    _d5_cf   = st.session_state.get("current_fund")
+
+    # 合併組合基金 + 個別基金（去重）
+    _d5_list = list(_d5_pf)
+    if _d5_cf:
+        _d5_cf_code = _d5_cf.get("fund_code", "") or _d5_cf.get("full_key", "")
+        if not any(f.get("code") == _d5_cf_code for f in _d5_list):
+            _d5_list.append({
+                "code": _d5_cf_code,
+                "name": _d5_cf.get("fund_name", "") or _d5_cf_code,
+                "loaded": True,
+                "metrics": _d5_cf.get("metrics", {}),
+                "moneydj_raw": _d5_cf,
+                "dividends": _d5_cf.get("dividends", []),
+                "series": _d5_cf.get("series"),
+                "_source": "個別基金分析",
+            })
+
+    if not _d5_list:
+        st.info("尚未載入任何基金。請至「單一基金」或「組合基金」Tab 載入後再查看。")
+    else:
+        def _d5_cell(col, label, value, ok_cond=True, fmt=None):
+            _empty = (value is None or value == "" or
+                      (isinstance(value, (dict, list)) and not value))
+            if _empty:
+                _ic, _vc, _vs = "⚠️", "#ff9800", "無資料"
+            else:
+                try:
+                    _ic  = "✅" if bool(ok_cond) else "⚠️"
+                    _vc  = "#00c853" if bool(ok_cond) else "#ff9800"
+                    _vs  = fmt(value) if fmt else str(value)[:60]
+                except Exception:
+                    _ic, _vc, _vs = "⚠️", "#ff9800", str(value)[:30]
+            col.markdown(
+                f"<div style='background:#1a1f2e;border-radius:6px;padding:6px 8px'>"
+                f"<div style='font-size:9px;color:#666'>{label}</div>"
+                f"<div style='font-size:13px;color:{_vc};font-weight:700'>{_ic} {_vs}</div>"
+                f"</div>", unsafe_allow_html=True)
+
+        for _d5_fd in _d5_list:
+            _d5_code  = _d5_fd.get("code", "?")
+            _d5_fname = _d5_fd.get("name", "") or _d5_code
+            _d5_mj    = _d5_fd.get("moneydj_raw", {}) or {}
+            _d5_m     = _d5_fd.get("metrics", {}) or {}
+            _d5_err   = _d5_fd.get("error", "") or _d5_mj.get("error", "")
+            _d5_nav   = _d5_m.get("nav") or _d5_mj.get("nav")
+            _d5_adr   = _d5_mj.get("moneydj_div_yield") or _d5_m.get("annual_div_rate")
+            _d5_perf  = _d5_mj.get("perf", {}) or {}
+            _d5_risk  = (_d5_mj.get("risk_metrics", {}) or {})
+            _d5_r1y   = (_d5_risk.get("risk_table") or {}).get("一年", {}) or {}
+            _d5_divs  = _d5_fd.get("dividends") or _d5_mj.get("dividends") or []
+            _d5_divs  = _d5_divs if isinstance(_d5_divs, list) else []
+            _d5_hold  = (_d5_mj.get("holdings") or {})
+            _d5_sects = _d5_hold.get("sector_alloc", []) or []
+            _d5_tops  = _d5_hold.get("top_holdings", []) or []
+
+            _d5_raw_s = _d5_fd.get("series") or _d5_mj.get("series")
+            try:
+                import pandas as _pd_d5
+                _d5_slen = len(_d5_raw_s) if isinstance(_d5_raw_s, _pd_d5.Series) else 0
+            except Exception:
+                _d5_slen = 0
+
+            _d5_ok_icon = "✅" if _d5_fd.get("loaded") and not _d5_err else ("❌" if _d5_err else "⬜")
+            with st.expander(f"{_d5_ok_icon} {_d5_fname[:35]} ({_d5_code})",
+                             expanded=bool(_d5_err)):
+                # Row 1: NAV / 配息率 / 1Y報酬 / 淨值筆數
+                _r1 = st.columns(4)
+                _d5_cell(_r1[0], "最新淨值 NAV",   _d5_nav,
+                         ok_cond=(_d5_nav is not None and float(_d5_nav or 0) > 0),
+                         fmt=lambda v: f"{float(v):.4f}")
+                _d5_cell(_r1[1], "年化配息率",      _d5_adr,
+                         ok_cond=(_d5_adr is not None and float(_d5_adr or 0) > 0),
+                         fmt=lambda v: f"{float(v):.2f}%")
+                _d5_cell(_r1[2], "1Y含息報酬",      _d5_perf.get("1Y"),
+                         ok_cond=(_d5_perf.get("1Y") is not None),
+                         fmt=lambda v: f"{v:.2f}%")
+                _d5_cell(_r1[3], "淨值歷史筆數",    _d5_slen if _d5_slen > 0 else None,
+                         ok_cond=(_d5_slen >= 30),
+                         fmt=lambda v: f"{v} 筆")
+                st.markdown("<div style='margin:4px 0'></div>", unsafe_allow_html=True)
+                # Row 2: 配息筆數 / 標準差 / Sharpe / MoneyDJ wb01
+                _r2 = st.columns(4)
+                _d5_cell(_r2[0], "配息記錄筆數",    len(_d5_divs) if _d5_divs else None,
+                         ok_cond=(len(_d5_divs) >= 1),
+                         fmt=lambda v: f"{v} 筆")
+                _d5_cell(_r2[1], "標準差(1Y)",      _d5_r1y.get("標準差"),
+                         ok_cond=(_d5_r1y.get("標準差") is not None),
+                         fmt=lambda v: f"{v}%")
+                _d5_cell(_r2[2], "Sharpe(1Y)",      _d5_r1y.get("Sharpe"),
+                         ok_cond=(_d5_r1y.get("Sharpe") is not None),
+                         fmt=lambda v: str(v))
+                _d5_cell(_r2[3], "wb01報酬資料",    _d5_perf.get("1Y"),
+                         ok_cond=(_d5_perf.get("1Y") is not None),
+                         fmt=lambda v: "已取得 ✓")
+                st.markdown("<div style='margin:4px 0'></div>", unsafe_allow_html=True)
+                # Row 3: holdings
+                _r3 = st.columns(4)
+                _d5_cell(_r3[0], "holdings物件",    _d5_hold or None,
+                         ok_cond=bool(_d5_hold),
+                         fmt=lambda v: "有資料 ✓")
+                _d5_cell(_r3[1], "產業配置筆數",    len(_d5_sects) if _d5_sects else None,
+                         ok_cond=(len(_d5_sects) >= 3),
+                         fmt=lambda v: f"{v} 項")
+                _d5_cell(_r3[2], "前10大持股",      len(_d5_tops) if _d5_tops else None,
+                         ok_cond=(len(_d5_tops) >= 5),
+                         fmt=lambda v: f"{v} 檔")
+                _d5_cell(_r3[3], "基本資料",        _d5_mj.get("investment_target"),
+                         ok_cond=bool(_d5_mj.get("investment_target")),
+                         fmt=lambda v: "已取得 ✓")
+
+                st.markdown(
+                    f"<span style='font-size:10px;color:#555'>"
+                    f"來源：{_d5_fd.get('_source','投資組合')} | "
+                    f"is_core: {_d5_fd.get('is_core','?')} | "
+                    f"currency: {_d5_fd.get('currency', _d5_mj.get('currency','?'))}"
+                    f"</span>", unsafe_allow_html=True)
+                if _d5_err:
+                    st.error(f"❌ 錯誤：{str(_d5_err)[:200]}")
