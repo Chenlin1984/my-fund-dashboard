@@ -7,19 +7,30 @@
 - **工作分支**: `claude/system-detox-upgrade-ra7Tp`
 - **⚠️ 注意**: tab5/tab6 定義已加入 app.py line 208，`with tab5:` / `with tab6:` 區塊尚待新增
 
-## 🎯 當前任務：新增 Tab5 資料診斷 + Tab6 說明書（分段執行計畫）
+## 🎯 當前任務 A：產出 ARCHITECTURE.md 技術規格書（分段執行計畫）
 
 | 步驟 | 內容 | 狀態 |
 |------|------|------|
-| Step A | app.py 末端新增 `with tab5:` — 總經 14 指標健康燈號表 + API Key 狀態 | ⏳ 待執行 |
-| Step B | app.py 末端 tab5 補充 — 基金診斷擴展欄（NAV/配息/持股/Sharpe 逐基金） | ⏳ 待執行 |
-| Step C | app.py 末端新增 `with tab6:` — 說明書 8 子頁（Macro Score / 景氣天氣 / 六因子 / 吃本金 / 再平衡 / TPI / 核心衛星 / 汰弱留強） | ⏳ 待執行 |
-| Step D | AST 語法驗證 → git commit → git push → 確認部署 | ⏳ 待執行 |
+| Arch-1 | ARCHITECTURE.md §1 專案概覽 + §2 目錄結構（含每檔說明與行數） | ⏳ 待執行 |
+| Arch-2 | ARCHITECTURE.md §3 資料流向圖（使用者操作 → Session State → 各模組呼叫鏈） | ⏳ 待執行 |
+| Arch-3 | ARCHITECTURE.md §4 核心函式 I/O 定義（macro_engine + fund_fetcher 主要函式） | ⏳ 待執行 |
+| Arch-4 | ARCHITECTURE.md §5 核心函式 I/O 定義（ai_engine + portfolio_engine + backtest_engine） | ⏳ 待執行 |
+| Arch-5 | ARCHITECTURE.md §6 Session State schema + §7 部署與外部依賴表，commit & push | ⏳ 待執行 |
 
-## 📐 設計規範
-- **零快取**：禁止 `@st.cache_data`
-- **分段寫入**：每 Step 只動 app.py 末端，不動現有程式碼
-- **資料來源**：Tab5 讀取 `st.session_state.indicators` / `portfolio_funds` / `current_fund`
+## 📐 ARCHITECTURE.md 規範
+- **純規格書**：不含任何實作程式碼
+- **函式格式**：`函式名(input_type) → output_type`，附一行說明
+- **資料流**：以文字箭頭圖（`→`）描述，不用 Mermaid（避免渲染問題）
+- **檔案位置**：`/home/user/my-fund-dashboard/ARCHITECTURE.md`
+
+## 🎯 次要任務 B：新增 Tab5 資料診斷 + Tab6 說明書（暫緩，待 Arch 完成後繼續）
+
+| 步驟 | 內容 | 狀態 |
+|------|------|------|
+| Tab-A | app.py 末端新增 `with tab5:` — 總經 14 指標健康燈號表 + API Key 狀態 | ⏳ 暫緩 |
+| Tab-B | app.py 末端 tab5 補充 — 基金診斷擴展欄（NAV/配息/持股/Sharpe 逐基金） | ⏳ 暫緩 |
+| Tab-C | app.py 末端新增 `with tab6:` — 說明書 8 子頁 | ⏳ 暫緩 |
+| Tab-D | AST 驗證 → commit → push | ⏳ 暫緩 |
 
 ---
 
