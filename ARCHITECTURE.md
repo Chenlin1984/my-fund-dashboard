@@ -61,3 +61,109 @@ my-fund-dashboard/
 | `ai_engine.py` | Gemini 回傳 markdown 字串 | 不抓資料、不操作 UI |
 | `portfolio_engine.py` | 評分 dict、警示 list、最佳權重 dict | 不抓資料 |
 | `backtest_engine.py` | 績效指標 dict（Sharpe/MaxDD/…） | 不抓資料 |
+
+---
+
+## §3 資料流向
+
+### 3.1 全域啟動流
+```
+Streamlit 啟動
+  → _load_keys()                    讀取 secrets.toml / env
+  → st.session_state 初始化          14 個 key 設預設值
+  → sidebar 渲染                     顯示 API 狀態 / Proxy 狀態
+  → st.tabs(6)                       分發至各 Tab
+```
+
+### 3.2 Tab1 — 總經儀表板
+```
+使用者按「載入總經」
+  → fetch_all_indicators(fred_api_key)          macro_engine
+      ├─ FRED API (14 指標)
+      └─ yfinance (VIX / DXY / ADL / COPPER)
+  → calc_macro_phase(indicators)                macro_engine
+  → identify_regime(indicators)                 macro_engine
+  → detect_systemic_risk(news_items)            macro_engine
+  → st.session_state 寫入:
+      indicators, phase_info, macro_last_update
+  → UI 渲染: 天氣卡 / 指標表 / 雷達圖
+  → [可選] analyze_macro_structured(api_key, …) ai_engine → Gemini API
+      → st.session_state.macro_ai 寫入
+```
+
+### 3.3 Tab2 — 單一基金分析
+```
+使用者輸入 MoneyDJ URL / 代碼
+  → parse_moneydj_input(user_input)             fund_fetcher
+  → fetch_fund_from_moneydj_url(url)            fund_fetcher
+      ├─ MoneyDJ wb01/wb05/wb07 (透過 NAS Proxy)
+      ├─ fetch_performance_wb01(code)
+      ├─ fetch_risk_metrics(code)
+      └─ fetch_holdings(code)
+  → calc_metrics(nav_series, divs)              fund_fetcher
+  → st.session_state.current_fund 寫入
+  → UI 渲染:
+      ├─ NAV 折線圖 (Plotly)
+      ├─ MK 買點卡（-1σ/-2σ/-3σ）
+      ├─ 配息記錄 + 吃本金警示
+      │     → dividend_safety(total_return, div_yield)  portfolio_engine
+      └─ 持股分析 expander（sector_alloc / top_holdings）
+  → [可選] analyze_fund_json(api_key, …)        ai_engine → Gemini API
+```
+
+### 3.4 Tab3 — 組合基金
+```
+使用者加入基金（代碼 + 投入金額 + 核心/衛星）
+  → fetch_fund_by_key(full_key)                 fund_fetcher
+  → assign_asset_role(fund_name)                app.py helper
+  → calc_fund_factor_score(fund_data)           portfolio_engine
+  → mk_fund_signal(fund_info, phase, score)     app.py helper
+  → st.session_state.portfolio_funds 寫入 (list)
+  → UI 渲染:
+      ├─ 核心/衛星比例圓餅圖
+      ├─ 再平衡差額計算
+      ├─ risk_alert(drawdown, coverage, …)      portfolio_engine
+      └─ 以息養股雙模式試算（🛒新購 / 📦現有持倉）
+  → [可選] analyze_portfolio_correlation(…)     ai_engine → Gemini API
+```
+
+### 3.5 Tab4 — 回測
+```
+使用者選取基金 + 時間區間 + 權重
+  → fetch_nav(full_key)                         fund_fetcher
+  → backtest_portfolio(nav_df, weights)          backtest_engine
+  → calc_performance_metrics(equity, returns)   backtest_engine
+  → compare_with_benchmark(port_curve, bench)   backtest_engine
+  → UI 渲染: 資產曲線 / 績效表 / 個別基金對比
+```
+
+### 3.6 Tab5 — 資料診斷（唯讀 Session State）
+```
+無網路呼叫，純讀取 session_state
+  → st.session_state.indicators     → 14 指標健康燈號表
+  → st.session_state.portfolio_funds → 基金逐筆診斷欄
+  → FRED_KEY / GEMINI_KEY            → API Key 狀態卡
+```
+
+### 3.7 Tab6 — 說明書
+```
+靜態內容，無網路呼叫，無 session_state 讀寫
+  → 8 子頁 Markdown 渲染（公式 / 判斷邏輯說明）
+```
+
+### 3.8 Session State 中央匯流
+```
+                   ┌─────────────────────────────┐
+                   │      st.session_state        │
+                   │  indicators      (dict)      │
+                   │  phase_info      (dict)      │
+                   │  macro_last_update (datetime)│
+                   │  macro_ai        (str)       │
+                   │  current_fund    (dict)      │
+                   │  portfolio_funds (list[dict])│
+                   │  news_items      (list)      │
+                   │  systemic_risk_data (dict)   │
+                   └─────────────────────────────┘
+        ↑ 寫入               ↓ 讀取
+  Tab1/Tab2/Tab3        Tab4/Tab5/AI 分析
+```

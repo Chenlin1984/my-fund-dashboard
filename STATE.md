@@ -12,7 +12,7 @@
 | 步驟 | 內容 | 狀態 |
 |------|------|------|
 | Arch-1 | ARCHITECTURE.md §1 專案概覽 + §2 目錄結構（含每檔說明與行數） | ✅ 完成 |
-| Arch-2 | ARCHITECTURE.md §3 資料流向圖（使用者操作 → Session State → 各模組呼叫鏈） | ⏳ 待執行 |
+| Arch-2 | ARCHITECTURE.md §3 資料流向圖（使用者操作 → Session State → 各模組呼叫鏈） | ✅ 完成 |
 | Arch-3 | ARCHITECTURE.md §4 核心函式 I/O 定義（macro_engine + fund_fetcher 主要函式） | ⏳ 待執行 |
 | Arch-4 | ARCHITECTURE.md §5 核心函式 I/O 定義（ai_engine + portfolio_engine + backtest_engine） | ⏳ 待執行 |
 | Arch-5 | ARCHITECTURE.md §6 Session State schema + §7 部署與外部依賴表，commit & push | ⏳ 待執行 |
