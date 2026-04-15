@@ -1,5 +1,55 @@
 # 專案戰情室 (Project State)
-> _最後更新：2026-04-14_
+> _最後更新：2026-04-15_
+
+## 📌 當前狀態
+- **環境**: Streamlit Cloud + GitHub
+- **進度**: Core Protocol v2.0 視覺化升級（分段執行模式）
+- **工作分支**: `claude/system-detox-upgrade-ra7Tp`
+- **app.py**: 1621 行，6 tabs，AST OK
+
+## 🎯 當前任務 C：Core Protocol v2.0 視覺化升級
+
+### 差距分析（現有 vs v2.0 要求）
+| 章節 | 需求 | 現況 | 差距 |
+|------|------|------|------|
+| Ch.1 | 資料完整度熱力圖（30日×指標 Heatmap） | 未實作 | ❌ 新增 |
+| Ch.1 | 三色燈號阻斷機制（紅燈停止AI分析） | 未實作 | ❌ 新增 |
+| Ch.2 | Bollinger Bands（MA20 ±2σ 半透明通道） | 未實作（有MA20線） | ❌ 新增 |
+| Ch.2 | 配息標記 💰（除息日 marker on chart） | 未實作 | ❌ 新增 |
+| Ch.3 | 宏觀風險溫度計（多軸複合圖：Score+利差+VIX+PMI） | 未實作 | ❌ 新增 |
+| Ch.4 | 真實收益長條圖（含息報酬 bar + 配息率紅虛線） | 未實作 | ❌ 新增 |
+
+### 分段執行計畫
+
+| 步驟 | 內容 | 狀態 |
+|------|------|------|
+| V2-1 | Tab2 圖表升級：Bollinger Bands（MA20±2σ 半透明通道）+ 配息標記💰 | ⏳ 待執行 |
+| V2-2 | Tab3 真實收益長條圖：含息報酬(bar) vs 配息率(紅虛線) + 吃本金視覺 | ⏳ 待執行 |
+| V2-3 | Tab1 宏觀風險溫度計：Macro Score(bar) + 10Y-2Y利差/VIX/PMI(3條線) 多軸圖 | ⏳ 待執行 |
+| V2-4 | Tab5 資料完整度熱力圖（30日×14指標 Heatmap）+ 三色燈號阻斷AI分析 | ⏳ 待執行 |
+
+### 設計規範
+- **禁止**：`@st.cache_data`、ETF 相關模組、虛擬測試數值
+- **圖表庫**：Plotly（現有基礎上擴充，不引入新依賴）
+- **邊界防呆**：< 20筆資料 → N/A；API null → 警告不崩潰
+- **每步驟**：僅動 app.py 特定函式區塊，AST 驗證後 commit
+
+---
+
+## ✅ 已完成任務
+
+| 任務 | 內容 | Commit |
+|------|------|--------|
+| Arch-1~5 | ARCHITECTURE.md 完整技術規格書 | ee45d5a |
+| Tab-A | Tab5 總經14指標健康燈號表 + API Key 狀態 | 6cbb96e |
+| Tab-B | Tab5 基金逐筆診斷欄 | 0c880d0 |
+| Tab-C | Tab6 說明書 8 子頁 | 4063fb7 |
+| fix | Tab5 pandas Series or 運算子修復 | 9ccbb30 |
+| P1 | Tab2 吃本金警示 | ✅ |
+| P2 | Tab3 以息養股雙模式 | ✅ |
+| P3 | AI 四段結構 MetaPrompt v18.2 | ✅ |
+| P4 | Tab2 MK 買點卡片 + 持股分析 | ✅ |
+
 
 ## 📌 當前狀態
 - **環境**: Streamlit Cloud + GitHub
