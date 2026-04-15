@@ -877,8 +877,81 @@ with tab3:
             "目標核心資產比例（%）", 50, 90,
             st.session_state.get("portfolio_core_pct",75), 5, key="slider_core_pct")
 
-        # ── 以息養股雙模式現金流試算（Core Protocol Ch.3.3）──
+        # ── 真實收益長條圖（Core Protocol v2.0 Ch.4）────────────────
         _loaded_pf = [f for f in pf if f.get("loaded") and not f.get("load_error")]
+        if _loaded_pf:
+            st.divider()
+            st.markdown("### 📊 真實收益 vs 配息率健康矩陣")
+            st.caption("長條高度 < 紅虛線 → 含息報酬不足以支撐配息 → 吃本金警示")
+
+            _rc_names, _rc_ret, _rc_div = [], [], []
+            for _f in _loaded_pf:
+                _mj  = _f.get("moneydj_raw", {}) or {}
+                _m   = _f.get("metrics", {}) or {}
+                _pf2 = _mj.get("perf", {}) or {}
+                _name = (_f.get("name") or _f["code"])[:18]
+                try:
+                    _ret = float(_pf2.get("1Y") or _m.get("ret_1y") or 0)
+                except Exception:
+                    _ret = 0.0
+                try:
+                    _div = float(_mj.get("moneydj_div_yield") or _m.get("annual_div_rate") or 0)
+                except Exception:
+                    _div = 0.0
+                _rc_names.append(_name)
+                _rc_ret.append(round(_ret, 2))
+                _rc_div.append(round(_div, 2))
+
+            if _rc_names:
+                _rc_colors = []
+                for _r, _d in zip(_rc_ret, _rc_div):
+                    if _d > 0 and _r < _d:
+                        _rc_colors.append("#f44336")   # 吃本金 → 紅
+                    elif _d > 0 and _r < _d * 1.2:
+                        _rc_colors.append("#ff9800")   # 邊緣 → 橙
+                    else:
+                        _rc_colors.append("#00c853")   # 健康 → 綠
+
+                fig_rc = go.Figure()
+                # 含息報酬率長條
+                fig_rc.add_trace(go.Bar(
+                    x=_rc_names, y=_rc_ret,
+                    name="含息報酬率(1Y)%",
+                    marker_color=_rc_colors,
+                    text=[f"{v:.1f}%" for v in _rc_ret],
+                    textposition="outside",
+                    hovertemplate="%{x}<br>含息報酬：%{y:.2f}%<extra></extra>"))
+                # 配息年化率紅色點線
+                if any(d > 0 for d in _rc_div):
+                    fig_rc.add_trace(go.Scatter(
+                        x=_rc_names, y=_rc_div,
+                        name="配息年化率%",
+                        mode="markers+lines",
+                        line=dict(color="#f44336", width=1.5, dash="dot"),
+                        marker=dict(symbol="diamond", size=8, color="#f44336"),
+                        hovertemplate="%{x}<br>配息率：%{y:.2f}%<extra></extra>"))
+                # 零基準線
+                fig_rc.add_hline(y=0, line_color="#555", line_width=1)
+                fig_rc.update_layout(
+                    paper_bgcolor="#0e1117", plot_bgcolor="#161b22",
+                    font_color="#e6edf3", height=320,
+                    margin=dict(t=30, b=20, l=40, r=20),
+                    legend=dict(orientation="h", font_size=10, y=1.08),
+                    yaxis_title="報酬率 / 配息率 (%)",
+                    bargap=0.35, hovermode="x unified")
+                st.plotly_chart(fig_rc, use_container_width=True)
+
+                # 吃本金統計摘要
+                _eat_n = sum(1 for r, d in zip(_rc_ret, _rc_div) if d > 0 and r < d)
+                _ok_n  = len(_rc_names) - _eat_n
+                _sc1, _sc2, _sc3 = st.columns(3)
+                _sc1.metric("組合基金數", len(_rc_names))
+                _sc2.metric("✅ 現金流健康", _ok_n)
+                _sc3.metric("🔴 吃本金警示", _eat_n,
+                            delta=f"-{_eat_n} 檔需檢視" if _eat_n else None,
+                            delta_color="inverse")
+
+        # ── 以息養股雙模式現金流試算（Core Protocol Ch.3.3）──
         if _loaded_pf:
             st.divider(); st.markdown("### 💰 以息養股現金流試算")
             _cf_tab_new, _cf_tab_hold = st.tabs(["🛒 新購試算", "📦 現有持倉"])
