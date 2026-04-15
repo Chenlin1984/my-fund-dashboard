@@ -1301,7 +1301,9 @@ with tab5:
             _d5_sects = _d5_hold.get("sector_alloc", []) or []
             _d5_tops  = _d5_hold.get("top_holdings", []) or []
 
-            _d5_raw_s = _d5_fd.get("series") or _d5_mj.get("series")
+            _d5_raw_s = _d5_fd.get("series")
+            if _d5_raw_s is None:
+                _d5_raw_s = _d5_mj.get("series")
             try:
                 import pandas as _pd_d5
                 _d5_slen = len(_d5_raw_s) if isinstance(_d5_raw_s, _pd_d5.Series) else 0
