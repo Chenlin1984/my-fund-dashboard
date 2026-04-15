@@ -803,9 +803,9 @@ _FUND_COMPANY_URLS = {
     # 安聯投信境內基金（ACTI/ACCP/ACDD 前綴）
     "ACTI71":  "https://tw.allianzgi.com/zh-tw/products-solutions/taiwan-onshore/allianz-global-investors-income-and-growth-balanced-fund-a1-twd",
     "ACTI98":  "https://tw.allianzgi.com/zh-tw/products-solutions/taiwan-onshore/allianz-global-investors-income-and-growth-balanced-fund-a-twd",
-    "ACTI94":  "https://tw.allianzgi.com/zh-tw/products-solutions/taiwan-onshore/",
-    "ACCP138": "https://tw.allianzgi.com/zh-tw/products-solutions/taiwan-onshore/",
-    "ACDD19":  "https://tw.allianzgi.com/zh-tw/products-solutions/taiwan-onshore/",
+    "ACTI94":  "https://www.moneydj.com/funddj/ya/yp010000.djhtm?a=ACTI94",
+    "ACCP138": "https://www.moneydj.com/funddj/ya/yp010000.djhtm?a=ACCP138",
+    "ACDD19":  "https://www.moneydj.com/funddj/ya/yp010000.djhtm?a=ACDD19",
 }
 
 # 安聯投信境內基金「ifund」電子交易平台淨值查詢（HTML 可抓）

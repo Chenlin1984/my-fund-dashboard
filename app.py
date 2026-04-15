@@ -95,7 +95,7 @@ with st.sidebar:
         if not _pcfg:
             st.sidebar.error("Proxy 未設定")
         else:
-            for _nm, _url in [("MoneyDJ","http://www.moneydj.com/"),("TDCC","https://openapi.tdcc.com.tw/")]:
+            for _nm, _url in [("MoneyDJ","https://www.moneydj.com/"),("TDCC","https://openapi.tdcc.com.tw/")]:
                 try:
                     _r = _req.get(_url, proxies=_pcfg, timeout=25, allow_redirects=False, verify=False)
                     if _r.status_code in (200,301,302,403): st.sidebar.success(f"✅ {_nm} 可達！HTTP {_r.status_code}")
