@@ -526,7 +526,7 @@ with tab2:
                 _ma20 = s.rolling(20).mean(); _ma60 = s.rolling(60).mean()
                 fig_n.add_trace(go.Scatter(x=_ma20.index,y=_ma20.values,name="MA20",line=dict(color="#ff9800",width=1,dash="dot")))
                 fig_n.add_trace(go.Scatter(x=_ma60.index,y=_ma60.values,name="MA60",line=dict(color="#9c27b0",width=1,dash="dot")))
-                for bv, bl, bc in [(m.get("buy1"),f"買1(-1σ)","#69f0ae"),(m.get("buy2"),f"買2(-2σ)","#00c853"),(m.get("buy3"),f"買3(-3σ)","#9c27b0")]:
+                for bv, bl, bc in [(m.get("buy1"),"買1(年低+σ)","#69f0ae"),(m.get("buy2"),"買2(年低)","#00c853"),(m.get("buy3"),"買3(年低-σ)","#9c27b0")]:
                     if bv: fig_n.add_hline(y=bv,line_color=bc,line_dash="dot",annotation_text=bl,annotation_font_color=bc,annotation_position="bottom right")
                 fig_n.update_layout(paper_bgcolor="#0e1117",plot_bgcolor="#161b22",font_color="#e6edf3",height=370,margin=dict(t=15,b=30,l=40,r=20),legend=dict(orientation="h",font_size=10,y=1.02),hovermode="x unified",yaxis_title="淨值")
                 st.plotly_chart(fig_n, use_container_width=True)
@@ -539,7 +539,7 @@ with tab2:
                 _m_nav_v = float(m.get("nav") or 0)
                 if _m_buy1:
                     _buy_rows = ""
-                    for _bv, _bl, _bc in [(_m_buy1,"-1σ 小跌可買","#69f0ae"),(_m_buy2,"-2σ 急跌加碼","#00c853"),(_m_buy3,"-3σ 大跌大買","#9c27b0")]:
+                    for _bv, _bl, _bc in [(_m_buy1,"年低+1σ 可買","#69f0ae"),(_m_buy2,"年低 大買","#00c853"),(_m_buy3,"年低-1σ 破底買","#9c27b0")]:
                         if _bv:
                             _dist = round(abs(_m_nav_v - _bv), 4) if _m_nav_v else 0
                             _dir  = "▲" if _m_nav_v > _bv else "▼"
