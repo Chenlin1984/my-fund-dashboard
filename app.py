@@ -371,6 +371,113 @@ with tab1:
                 f"<div style='flex:1;text-align:right;color:#ccc;font-size:11px'>{_adv}</div></div>"
                 f"{_trig_html}</div>", unsafe_allow_html=True)
 
+        # ── 宏觀風險溫度計（Core Protocol v2.0 Ch.3 多軸複合圖）──────
+        _pmi_s   = (ind.get("PMI")         or {}).get("series")
+        _spr_s   = (ind.get("YIELD_10Y2Y") or {}).get("series")
+        _vix_s   = (ind.get("VIX")         or {}).get("series")
+        _has_chart = any(
+            s is not None and hasattr(s, "__len__") and len(s) >= 4
+            for s in [_pmi_s, _spr_s, _vix_s])
+        if _has_chart:
+            with st.expander("📊 宏觀風險溫度計（多軸複合圖）", expanded=True):
+                from plotly.subplots import make_subplots
+                fig_mac = make_subplots(
+                    rows=2, cols=1, shared_xaxes=True,
+                    row_heights=[0.55, 0.45],
+                    vertical_spacing=0.06,
+                    specs=[[{"secondary_y": True}], [{"secondary_y": False}]])
+
+                # ── 主軸 Bar：Macro Score 各期（以 breakdown 模擬）────────
+                # 取最近 24 個月指標分數作為時序（使用各指標 value 趨勢代替）
+                _score_val = sc  # 當前總分
+                _sc_color  = "#f44336" if _score_val>=8 else ("#00c853" if _score_val>=5 else ("#64b5f6" if _score_val>=3 else "#ff9800"))
+                # 無歷史評分序列時，顯示各指標貢獻 bar（靜態橫向）
+                _ind_rows = [(k, v) for k, v in ind.items() if isinstance(v, dict) and v.get("score") is not None]
+                if _ind_rows:
+                    _bar_names = [v.get("name", k)[:10] for k, v in _ind_rows]
+                    _bar_scores = [float(v.get("score", 0)) for _, v in _ind_rows]
+                    _bar_colors = ["#00c853" if s > 0 else "#f44336" for s in _bar_scores]
+                    fig_mac.add_trace(
+                        go.Bar(x=_bar_names, y=_bar_scores,
+                               name="各指標得分", marker_color=_bar_colors,
+                               hovertemplate="%{x}: %{y:+.2f}<extra></extra>"),
+                        row=1, col=1)
+                    fig_mac.add_hline(y=0, line_color="#555", line_width=1, row=1, col=1)
+
+                # ── 副軸 Lines：殖利率利差 / VIX / PMI ────────────────────
+                import pandas as _pd_mac
+                def _safe_series(s):
+                    if s is None: return None
+                    try:
+                        if not isinstance(s, _pd_mac.Series): s = _pd_mac.Series(s)
+                        return s.dropna().tail(60)
+                    except Exception: return None
+
+                _spr_clean = _safe_series(_spr_s)
+                _vix_clean = _safe_series(_vix_s)
+                _pmi_clean = _safe_series(_pmi_s)
+
+                if _spr_clean is not None and len(_spr_clean) >= 2:
+                    fig_mac.add_trace(
+                        go.Scatter(x=list(_spr_clean.index), y=list(_spr_clean.values),
+                                   name="10Y-2Y利差(%)", mode="lines",
+                                   line=dict(color="#64b5f6", width=1.5),
+                                   hovertemplate="%{y:.3f}%<extra>10Y-2Y</extra>"),
+                        row=2, col=1)
+                    # 倒掛警戒線
+                    fig_mac.add_hline(y=0, line_color="#f44336", line_dash="dash",
+                                      line_width=1, row=2, col=1,
+                                      annotation_text="倒掛警戒",
+                                      annotation_font_color="#f44336",
+                                      annotation_position="bottom right")
+
+                if _vix_clean is not None and len(_vix_clean) >= 2:
+                    fig_mac.add_trace(
+                        go.Scatter(x=list(_vix_clean.index), y=list(_vix_clean.values),
+                                   name="VIX恐慌", mode="lines",
+                                   line=dict(color="#ff9800", width=1.5, dash="dot"),
+                                   hovertemplate="%{y:.1f}<extra>VIX</extra>"),
+                        row=2, col=1)
+
+                if _pmi_clean is not None and len(_pmi_clean) >= 2:
+                    fig_mac.add_trace(
+                        go.Scatter(x=list(_pmi_clean.index), y=list(_pmi_clean.values),
+                                   name="PMI製造業", mode="lines",
+                                   line=dict(color="#ce93d8", width=1.5, dash="dashdot"),
+                                   hovertemplate="%{y:.1f}<extra>PMI</extra>"),
+                        row=2, col=1)
+                    fig_mac.add_hline(y=50, line_color="#888", line_dash="dot",
+                                      line_width=1, row=2, col=1,
+                                      annotation_text="50榮枯線",
+                                      annotation_font_color="#888",
+                                      annotation_position="bottom right")
+
+                fig_mac.update_layout(
+                    paper_bgcolor="#0e1117", plot_bgcolor="#161b22",
+                    font_color="#e6edf3", height=480,
+                    margin=dict(t=15, b=20, l=50, r=20),
+                    legend=dict(orientation="h", font_size=10, y=1.03),
+                    hovermode="x unified",
+                    bargap=0.15)
+                fig_mac.update_yaxes(title_text="指標得分", row=1, col=1,
+                                     gridcolor="#1e2a3a")
+                fig_mac.update_yaxes(title_text="指標數值", row=2, col=1,
+                                     gridcolor="#1e2a3a")
+                fig_mac.update_xaxes(gridcolor="#1e2a3a")
+                st.plotly_chart(fig_mac, use_container_width=True)
+
+                # 研判結論
+                _res_txt = ""
+                if _score_val >= 8:
+                    _res_txt = "🔥 **擴張/高峰期**：居高思危，股 40% / 債 40% / 現金 20%。獲利轉入核心穩健配息基金。"
+                elif _score_val >= 5:
+                    _res_txt = "🌱 **復甦/擴張期**：積極佈局，股 60% / 債 30% / 現金 10%。衛星主攻成長題材。"
+                elif _score_val >= 3:
+                    _res_txt = "🍂 **衰退轉復甦**：防禦轉進，股 40% / 債 40% / 現金 20%。聚焦核心配息資產。"
+                else:
+                    _res_txt = "❄️ **衰退期**：現金為王，股 20% / 債 50% / 現金 30%。嚴格檢視吃本金風險。"
+                st.info(_res_txt)
+
         # ── 指標貢獻明細（折疊）──
         with st.expander("📊 各指標貢獻明細", expanded=False):
             _rows = []
