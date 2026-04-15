@@ -116,6 +116,7 @@ def fetch_url_with_retry(url, headers=None, params=None,
     """
     帶重試機制的 requests.get（統一 Referer + User-Agent）。
     v13.9 修正：MoneyDJ 全站 Big5 編碼，強制正確解碼後才回傳。
+    v14.5 修正：Proxy 全數 ProxyError 時自動降級直連（NAS 不可達時仍可嘗試）。
     """
     import time as _t
     _headers = {
@@ -127,6 +128,7 @@ def fetch_url_with_retry(url, headers=None, params=None,
         _headers.update(headers)
     _proxy  = _proxies()
     _verify = _ssl_verify()   # proxy 模式跳過 SSL 憑證驗證（Squid CONNECT 相容）
+    _proxy_err_count = 0
     for attempt in range(retries):
         try:
             resp = requests.get(url, headers=_headers,
@@ -153,12 +155,31 @@ def fetch_url_with_retry(url, headers=None, params=None,
                 if resp.text.strip():
                     return resp
         except requests.exceptions.ProxyError as e:
+            _proxy_err_count += 1
             print(f"[proxy] ProxyError（attempt {attempt+1}）：{e} — 確認 NAS 已啟動且 Port 3128 已轉發")
         except requests.exceptions.Timeout:
             print(f"[proxy] Timeout（attempt {attempt+1}）：{url[:60]}")
         except Exception as e:
             print(f"錯誤：{e}")
         _t.sleep(sleep_sec)
+
+    # v14.5 直連降級：Proxy 全數 ProxyError → 嘗試一次直連（NAS 不可達時的備援）
+    if _proxy and _proxy_err_count >= retries:
+        print(f"[proxy] Proxy 全數失敗，降級直連嘗試：{url[:80]}")
+        try:
+            resp_dc = requests.get(url, headers=_headers, params=params,
+                                   timeout=timeout, proxies={}, verify=True)
+            if resp_dc.status_code == 200:
+                if "moneydj.com" in url:
+                    resp_dc.encoding = "big5"
+                else:
+                    resp_dc.encoding = resp_dc.apparent_encoding or "utf-8"
+                if resp_dc.text.strip():
+                    print(f"[proxy] 直連成功：{url[:80]}")
+                    return resp_dc
+        except Exception as e_dc:
+            print(f"[proxy] 直連也失敗：{e_dc}")
+
     return None
 
 
