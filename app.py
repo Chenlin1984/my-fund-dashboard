@@ -510,19 +510,33 @@ with tab1:
         # ── AI 結構化總經摘要 ──
         st.divider()
         if GEMINI_KEY:
-            if st.button("🤖 AI 結構化總經摘要", key="btn_macro_ai", type="primary"):
-                with st.spinner("Gemini 生成【現狀解讀】【系統性風險】【觀察重點】中..."):
-                    try:
-                        _ai_txt = analyze_macro_structured(
-                            api_key      = GEMINI_KEY,
-                            indicators   = ind,
-                            phase_info   = phase,
-                            news_items   = st.session_state.get("news_items",[]),
-                            systemic_risk= st.session_state.get("systemic_risk_data"),
-                        )
-                        st.session_state.macro_ai = _ai_txt
-                    except Exception as _e:
-                        st.error(f"AI 分析失敗：{_e}")
+            # ── 三色燈號阻斷（Core Protocol v2.0 Ch.1）─────────────
+            _ai_mac_pct = st.session_state.get("data_health_pct", 100)
+            _ai_mac_tl  = st.session_state.get("data_health_traffic", "🟢")
+            if _ai_mac_pct < 50:
+                st.markdown(
+                    "<div style='border-left:4px solid #f44336;background:#1a1f2e;"
+                    "border-radius:0 8px 8px 0;padding:10px 14px;font-size:13px'>"
+                    "🔴 <b>紅燈阻斷</b>：總經資料完整率 "
+                    f"<b>{_ai_mac_pct}%</b>（&lt;50%），AI 分析停用。"
+                    "請前往「🔬 資料診斷」頁確認指標載入狀況。</div>",
+                    unsafe_allow_html=True)
+            else:
+                if _ai_mac_pct < 80:
+                    st.warning(f"🟡 資料完整率 **{_ai_mac_pct}%**（黃燈），AI 結果參考性降低。")
+                if st.button("🤖 AI 結構化總經摘要", key="btn_macro_ai", type="primary"):
+                    with st.spinner("Gemini 生成【現狀解讀】【系統性風險】【觀察重點】中..."):
+                        try:
+                            _ai_txt = analyze_macro_structured(
+                                api_key      = GEMINI_KEY,
+                                indicators   = ind,
+                                phase_info   = phase,
+                                news_items   = st.session_state.get("news_items",[]),
+                                systemic_risk= st.session_state.get("systemic_risk_data"),
+                            )
+                            st.session_state.macro_ai = _ai_txt
+                        except Exception as _e:
+                            st.error(f"AI 分析失敗：{_e}")
             if st.session_state.macro_ai:
                 st.markdown(st.session_state.macro_ai)
         else:
@@ -846,14 +860,27 @@ with tab2:
                 # AI 基金分析
                 st.divider()
                 if GEMINI_KEY:
-                    if st.button("🤖 AI 基金分析", key="btn_fund_ai"):
-                        with st.spinner("Gemini 分析中..."):
-                            try:
-                                _ai = analyze_fund_json(GEMINI_KEY, name or fk, m,
-                                    mj_raw.get("perf",{}), phase_info_s, divs)
-                                st.session_state.fund_ai_txt = _ai
-                            except Exception as _e:
-                                st.error(f"AI 分析失敗：{_e}")
+                    # ── 三色燈號阻斷（Core Protocol v2.0 Ch.1）─────────
+                    _ai_fd_pct = st.session_state.get("data_health_pct", 100)
+                    if _ai_fd_pct < 50:
+                        st.markdown(
+                            "<div style='border-left:4px solid #f44336;background:#1a1f2e;"
+                            "border-radius:0 8px 8px 0;padding:10px 14px;font-size:13px'>"
+                            "🔴 <b>紅燈阻斷</b>：總經資料完整率 "
+                            f"<b>{_ai_fd_pct}%</b>（&lt;50%），AI 基金分析停用。"
+                            "請前往「🔬 資料診斷」確認指標載入狀況。</div>",
+                            unsafe_allow_html=True)
+                    else:
+                        if _ai_fd_pct < 80:
+                            st.warning(f"🟡 資料完整率 **{_ai_fd_pct}%**（黃燈），AI 結果參考性降低。")
+                        if st.button("🤖 AI 基金分析", key="btn_fund_ai"):
+                            with st.spinner("Gemini 分析中..."):
+                                try:
+                                    _ai = analyze_fund_json(GEMINI_KEY, name or fk, m,
+                                        mj_raw.get("perf",{}), phase_info_s, divs)
+                                    st.session_state.fund_ai_txt = _ai
+                                except Exception as _e:
+                                    st.error(f"AI 分析失敗：{_e}")
                     if st.session_state.get("fund_ai_txt"):
                         st.markdown(st.session_state.fund_ai_txt)
 
@@ -1470,6 +1497,108 @@ with tab5:
             f"評分：<b style='color:#e6edf3'>{_d5_phase.get('score','?')}/10</b>　"
             f"衰退率：<b style='color:#e6edf3'>{_d5_phase.get('rec_prob','?')}%</b>"
             f"</div>", unsafe_allow_html=True)
+
+    # ── 三色燈號：存入 session_state 供 AI 阻斷機制使用 ──────────
+    _d5_traffic = "🔴" if _d5_pct < 50 else ("🟡" if _d5_pct < 80 else "🟢")
+    st.session_state["data_health_pct"]     = _d5_pct
+    st.session_state["data_health_traffic"] = _d5_traffic
+
+    # ── 資料完整度熱力圖（Core Protocol v2.0 Ch.1）────────────────
+    if _d5_ind:
+        with st.expander("🌡️ 資料完整度熱力圖（近30日 × 14指標）", expanded=True):
+            import pandas as _pd_hm
+            import numpy as _np_hm
+            from datetime import datetime as _dt_hm, timedelta as _td_hm
+            _today_hm = _dt_hm.today().date()
+            _days_hm  = [(_today_hm - _td_hm(days=i)) for i in range(29, -1, -1)]
+            _ind_keys = [r[0] for r in _D5_EXPECTED]
+            _ind_lbls = [r[1][:12] for r in _D5_EXPECTED]
+
+            # 建立 30×N 矩陣：0=缺失, 0.5=資料陳舊(>14天), 1=正常
+            _hm_z   = []
+            _hm_txt = []
+            for _ik, _inm in zip(_ind_keys, _ind_lbls):
+                _iv  = _d5_ind.get(_ik, {}) or {}
+                _row_z, _row_t = [], []
+                # 取指標最新資料日期
+                _idate_raw = _iv.get("date", "")
+                _idate = None
+                if _idate_raw:
+                    try:
+                        _idate = _pd_hm.to_datetime(str(_idate_raw)).date()
+                    except Exception:
+                        _idate = None
+                # 若有 series，取最後有效日
+                _iser = _iv.get("series")
+                if _iser is not None:
+                    try:
+                        _s_pd = _pd_hm.Series(_iser).dropna()
+                        if len(_s_pd) > 0:
+                            _idate = _pd_hm.to_datetime(_s_pd.index[-1]).date()
+                    except Exception:
+                        pass
+                for _d in _days_hm:
+                    if _idate is None or _iv.get("value") is None:
+                        _row_z.append(0.0)
+                        _row_t.append("缺失")
+                    else:
+                        _age = (_today_hm - _idate).days  # 最新資料距今
+                        # 對於「歷史日 d」而言：若 _idate >= d，代表那天之後有資料
+                        if _idate >= _d:
+                            _row_z.append(1.0)
+                            _row_t.append(f"有資料\n(截至{_idate})")
+                        elif (_today_hm - _d).days <= 14 and _age <= 45:
+                            # 近14天且資料不超過45天舊 → 橙色（資料合理但非即時）
+                            _row_z.append(0.5)
+                            _row_t.append(f"延遲更新\n(上次{_idate})")
+                        else:
+                            _row_z.append(0.0)
+                            _row_t.append(f"缺失\n(上次{_idate or '無'})")
+                _hm_z.append(_row_z)
+                _hm_txt.append(_row_t)
+
+            _hm_x = [str(_d) for _d in _days_hm]
+            _fig_hm = go.Figure(go.Heatmap(
+                z         = _hm_z,
+                x         = _hm_x,
+                y         = _ind_lbls,
+                text      = _hm_txt,
+                texttemplate = "",
+                colorscale= [[0.0, "#f44336"], [0.5, "#ff9800"], [1.0, "#00c853"]],
+                zmin=0, zmax=1,
+                showscale = True,
+                colorbar  = dict(
+                    tickvals=[0, 0.5, 1],
+                    ticktext=["缺失", "延遲", "正常"],
+                    len=0.6, thickness=10,
+                    title=dict(text="狀態", side="right")),
+                hovertemplate="指標: %{y}<br>日期: %{x}<br>%{text}<extra></extra>",
+            ))
+            _fig_hm.update_layout(
+                paper_bgcolor="#0e1117", plot_bgcolor="#161b22",
+                font_color="#e6edf3",
+                height=max(280, len(_ind_keys) * 22 + 80),
+                margin=dict(t=10, b=60, l=110, r=80),
+                xaxis=dict(tickangle=-45, tickfont_size=9,
+                           nticks=10, gridcolor="#1e2a3a"),
+                yaxis=dict(tickfont_size=10, autorange="reversed"),
+            )
+            st.plotly_chart(_fig_hm, use_container_width=True)
+
+            # 三色燈號說明
+            _tl_color = "#f44336" if _d5_pct < 50 else ("#ff9800" if _d5_pct < 80 else "#00c853")
+            _tl_msg   = (
+                "🔴 **紅燈（< 50%）**：資料嚴重不足，AI 分析已停用。請先於 Tab1 載入總經資料。"
+                if _d5_pct < 50 else (
+                "🟡 **黃燈（50-79%）**：部分指標缺失，AI 分析仍可執行，但結果參考性降低。"
+                if _d5_pct < 80 else
+                "🟢 **綠燈（≥ 80%）**：資料完整，AI 分析正常啟用。"
+            ))
+            st.markdown(
+                f"<div style='border-left:4px solid {_tl_color};"
+                f"background:#1a1f2e;border-radius:0 8px 8px 0;padding:10px 14px;"
+                f"margin-top:8px;font-size:13px'>{_tl_msg}</div>",
+                unsafe_allow_html=True)
 
     st.divider()
 
