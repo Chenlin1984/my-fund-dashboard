@@ -4,7 +4,7 @@
 零快取：每次操作皆即時抓取，確保資料絕對最新
 """
 import streamlit as st
-import os, datetime, re
+import os, datetime, re, time as _time_mod
 import plotly.graph_objects as go
 import pandas as pd
 import numpy as np
@@ -67,6 +67,7 @@ for _k, _v in {
     "tdcc_results":[],"mj_fund_data":None,
     "portfolio_funds":[],"portfolio_core_pct":75,
     "news_items":[],"systemic_risk_data":None,
+    "api_latency_log":[],
 }.items():
     if _k not in st.session_state:
         st.session_state[_k] = _v
@@ -231,7 +232,9 @@ with tab1:
         _btn_label = "🔄 更新總經資料" if st.session_state.macro_done else "📡 載入總經資料"
         if st.button(_btn_label, type="primary", key="btn_macro_load"):
             with st.spinner("📡 從 FRED / Yahoo Finance 抓取最新指標..."):
+                _t0_macro = _time_mod.time()
                 ind   = fetch_all_indicators(FRED_KEY)
+                _macro_ms = round((_time_mod.time() - _t0_macro) * 1000)
                 phase = calc_macro_phase(ind)
                 old_phase = (st.session_state.phase_info.get("phase","")
                              if st.session_state.phase_info else "")
@@ -249,7 +252,16 @@ with tab1:
                 st.session_state.macro_last_update = _now_tw()
                 if ind and "FED_RATE" in ind:
                     set_risk_free_rate(ind["FED_RATE"].get("value",4.0) / 100)
-                st.success(f"✅ 已抓取 {len(ind)} 個指標！（{_now_tw().strftime('%H:%M')} TW）")
+                # ── 記錄 API 延遲（供 Tab5 延遲趨勢圖）──
+                _lat_log = st.session_state.get("api_latency_log", [])
+                _lat_log.append({
+                    "label":    _now_tw().strftime("%H:%M"),
+                    "macro_ms": _macro_ms,
+                    "moneydj_ms": None,
+                    "yf_ms":      None,
+                })
+                st.session_state["api_latency_log"] = _lat_log[-24:]
+                st.success(f"✅ 已抓取 {len(ind)} 個指標！（{_now_tw().strftime('%H:%M')} TW｜{_macro_ms}ms）")
             with st.spinner("📰 抓取市場新聞 + 系統性風險掃描..."):
                 try:
                     _news = fetch_market_news(max_per_feed=5)
@@ -1599,6 +1611,86 @@ with tab5:
                 f"background:#1a1f2e;border-radius:0 8px 8px 0;padding:10px 14px;"
                 f"margin-top:8px;font-size:13px'>{_tl_msg}</div>",
                 unsafe_allow_html=True)
+
+    # ── Section 1b: API 延遲趨勢圖（Core Protocol v2.0 Ch.1）────────
+    with st.expander("📡 API 連線延遲趨勢（近24次）", expanded=False):
+        import requests as _req_lat
+        # 手動測速按鈕
+        if st.button("🕐 立即測試三源連線速度", key="btn_d5_ping"):
+            _proxy = get_proxy_config() or {}
+            _kw    = dict(proxies=_proxy, timeout=8, verify=False,
+                          headers={"User-Agent": "Mozilla/5.0"})
+            _ping_results: dict = {}
+            for _src, _url in [
+                ("FRED",     "https://fred.stlouisfed.org/"),
+                ("MoneyDJ",  "https://www.moneydj.com/"),
+                ("Yahoo/yf", "https://finance.yahoo.com/"),
+            ]:
+                try:
+                    _t0p = _time_mod.time()
+                    _req_lat.get(_url, **_kw)
+                    _ping_results[_src] = round((_time_mod.time() - _t0p) * 1000)
+                except Exception as _pe:
+                    _ping_results[_src] = None  # 無法連線
+            _lat_log_p = st.session_state.get("api_latency_log", [])
+            _lat_log_p.append({
+                "label":      _now_tw().strftime("%H:%M"),
+                "macro_ms":   _ping_results.get("FRED"),
+                "moneydj_ms": _ping_results.get("MoneyDJ"),
+                "yf_ms":      _ping_results.get("Yahoo/yf"),
+            })
+            st.session_state["api_latency_log"] = _lat_log_p[-24:]
+            # 即時顯示結果
+            _pcols = st.columns(3)
+            for _ci, (_sn, _ms) in enumerate(_ping_results.items()):
+                _col_c = "#00c853" if (_ms and _ms < 1000) else ("#ff9800" if (_ms and _ms < 3000) else "#f44336")
+                _pcols[_ci].markdown(
+                    f"<div style='background:#1a1f2e;border-radius:8px;padding:10px;text-align:center'>"
+                    f"<div style='font-size:11px;color:#888'>{_sn}</div>"
+                    f"<div style='font-size:20px;font-weight:700;color:{_col_c}'>"
+                    f"{'N/A' if _ms is None else f'{_ms} ms'}</div></div>",
+                    unsafe_allow_html=True)
+
+        # 延遲折線圖
+        _lat_hist = st.session_state.get("api_latency_log", [])
+        if len(_lat_hist) >= 2:
+            _lh_x    = [r.get("label","") for r in _lat_hist]
+            _lh_fred = [r.get("macro_ms")   for r in _lat_hist]
+            _lh_mj   = [r.get("moneydj_ms") for r in _lat_hist]
+            _lh_yf   = [r.get("yf_ms")      for r in _lat_hist]
+            _fig_lat  = go.Figure()
+            for _lt_name, _lt_y, _lt_color in [
+                ("FRED/yfinance(載入)", _lh_fred, "#64b5f6"),
+                ("MoneyDJ(測速)",       _lh_mj,   "#ff9800"),
+                ("Yahoo/yf(測速)",      _lh_yf,   "#ce93d8"),
+            ]:
+                if any(v is not None for v in _lt_y):
+                    _fig_lat.add_trace(go.Scatter(
+                        x=_lh_x, y=_lt_y, name=_lt_name, mode="lines+markers",
+                        line=dict(color=_lt_color, width=1.8),
+                        marker=dict(size=5),
+                        connectgaps=True,
+                        hovertemplate="%{y} ms<extra>" + _lt_name + "</extra>"))
+            # 警戒線：1000ms 黃 / 3000ms 紅
+            _fig_lat.add_hline(y=1000, line_color="#ff9800", line_dash="dot",
+                               line_width=1, annotation_text="1s 警示",
+                               annotation_font_color="#ff9800",
+                               annotation_position="bottom right")
+            _fig_lat.add_hline(y=3000, line_color="#f44336", line_dash="dash",
+                               line_width=1, annotation_text="3s 警戒",
+                               annotation_font_color="#f44336",
+                               annotation_position="bottom right")
+            _fig_lat.update_layout(
+                paper_bgcolor="#0e1117", plot_bgcolor="#161b22",
+                font_color="#e6edf3", height=260,
+                margin=dict(t=10, b=40, l=60, r=20),
+                xaxis=dict(tickangle=-30, tickfont_size=9, gridcolor="#1e2a3a"),
+                yaxis=dict(title="回應時間 (ms)", gridcolor="#1e2a3a"),
+                legend=dict(orientation="h", font_size=10, y=1.05),
+                hovermode="x unified")
+            st.plotly_chart(_fig_lat, use_container_width=True)
+        else:
+            st.info("尚無延遲記錄。點擊「立即測試」或先於 Tab1 載入總經資料，系統將自動記錄 FRED/yfinance 回應時間。")
 
     st.divider()
 
