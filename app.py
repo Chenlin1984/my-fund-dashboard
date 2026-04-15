@@ -518,17 +518,96 @@ with tab2:
                         f"<div style='flex:1'><div style='color:#888;font-size:11px'>景氣位階（{phase_info_s['phase']} {phase_info_s['score']}/10）</div>"
                         f"<div style='font-size:12px;color:#c9d1d9'>{sig['reason']}</div></div></div>", unsafe_allow_html=True)
 
-                # 淨值走勢圖
-                st.markdown("### 📈 淨值走勢 + MK 買點")
+                # 淨值走勢圖（Bollinger Bands + 配息標記 v2.0）
+                st.markdown("### 📈 淨值走勢 + 布林通道 + 配息標記")
                 df_show = s.reset_index(); df_show.columns = ["date","nav"]
                 fig_n = go.Figure()
-                fig_n.add_trace(go.Scatter(x=df_show["date"],y=df_show["nav"],name="淨值",line=dict(color="#2196f3",width=1.5)))
-                _ma20 = s.rolling(20).mean(); _ma60 = s.rolling(60).mean()
-                fig_n.add_trace(go.Scatter(x=_ma20.index,y=_ma20.values,name="MA20",line=dict(color="#ff9800",width=1,dash="dot")))
-                fig_n.add_trace(go.Scatter(x=_ma60.index,y=_ma60.values,name="MA60",line=dict(color="#9c27b0",width=1,dash="dot")))
-                for bv, bl, bc in [(m.get("buy1"),"買1(年低+σ)","#69f0ae"),(m.get("buy2"),"買2(年低)","#00c853"),(m.get("buy3"),"買3(年低-σ)","#9c27b0")]:
-                    if bv: fig_n.add_hline(y=bv,line_color=bc,line_dash="dot",annotation_text=bl,annotation_font_color=bc,annotation_position="bottom right")
-                fig_n.update_layout(paper_bgcolor="#0e1117",plot_bgcolor="#161b22",font_color="#e6edf3",height=370,margin=dict(t=15,b=30,l=40,r=20),legend=dict(orientation="h",font_size=10,y=1.02),hovermode="x unified",yaxis_title="淨值")
+
+                # ── Bollinger Bands（MA20 ±2σ，半透明填色）──────────────
+                _bb_period = min(20, len(s))
+                _bb_ma  = s.rolling(_bb_period).mean()
+                _bb_std = s.rolling(_bb_period).std()
+                _bb_up  = (_bb_ma + 2 * _bb_std).dropna()
+                _bb_dn  = (_bb_ma - 2 * _bb_std).dropna()
+                # 上軌（填色基準，先畫，不顯示圖例線條）
+                fig_n.add_trace(go.Scatter(
+                    x=_bb_up.index, y=_bb_up.values, name="BB上軌",
+                    line=dict(color="rgba(33,150,243,0.25)", width=1),
+                    showlegend=False))
+                # 下軌 + fill to 上軌（半透明藍色通道）
+                fig_n.add_trace(go.Scatter(
+                    x=_bb_dn.index, y=_bb_dn.values, name="布林通道(±2σ)",
+                    fill="tonexty",
+                    fillcolor="rgba(33,150,243,0.08)",
+                    line=dict(color="rgba(33,150,243,0.25)", width=1)))
+                # MA20 中軌
+                fig_n.add_trace(go.Scatter(
+                    x=_bb_ma.dropna().index, y=_bb_ma.dropna().values,
+                    name="MA20", line=dict(color="#ff9800", width=1, dash="dot")))
+                # MA60
+                _ma60 = s.rolling(60).mean()
+                fig_n.add_trace(go.Scatter(
+                    x=_ma60.dropna().index, y=_ma60.dropna().values,
+                    name="MA60", line=dict(color="#9c27b0", width=1, dash="dot")))
+                # 淨值主線（最後畫，在最上層）
+                fig_n.add_trace(go.Scatter(
+                    x=df_show["date"], y=df_show["nav"],
+                    name="淨值", line=dict(color="#2196f3", width=1.8)))
+
+                # ── 配息標記 💰（除息日垂直虛線 + marker）───────────────
+                _chart_divs = mj_raw.get("dividends") or []
+                _chart_divs = _chart_divs if isinstance(_chart_divs, list) else []
+                _div_dates, _div_navs, _div_texts = [], [], []
+                for _cd in _chart_divs:
+                    try:
+                        _cd_date = pd.Timestamp(_cd.get("date",""))
+                        if _cd_date in s.index:
+                            _cd_nav = float(s.loc[_cd_date])
+                        else:
+                            # 找最近交易日
+                            _near = s.index[s.index.get_indexer([_cd_date], method="nearest")[0]]
+                            _cd_nav = float(s.loc[_near])
+                            _cd_date = _near
+                        _cd_amt = _cd.get("amount") or _cd.get("dividend") or ""
+                        _div_dates.append(_cd_date)
+                        _div_navs.append(_cd_nav)
+                        _div_texts.append(f"💰 配息 {_cd_amt}" if _cd_amt else "💰 配息")
+                    except Exception:
+                        continue
+                if _div_dates:
+                    fig_n.add_trace(go.Scatter(
+                        x=_div_dates, y=_div_navs,
+                        mode="markers+text",
+                        name="配息日",
+                        marker=dict(symbol="triangle-up", size=10, color="#ffd600"),
+                        text=_div_texts,
+                        textposition="top center",
+                        textfont=dict(size=9, color="#ffd600"),
+                        hovertemplate="%{text}<br>淨值：%{y:.4f}<extra></extra>"))
+
+                # ── MK 買點水平線 ───────────────────────────────────────
+                for bv, bl, bc in [
+                    (m.get("buy1"), "買1(年低+σ)", "#69f0ae"),
+                    (m.get("buy2"), "買2(年低)",   "#00c853"),
+                    (m.get("buy3"), "買3(年低-σ)", "#9c27b0"),
+                ]:
+                    if bv:
+                        fig_n.add_hline(y=bv, line_color=bc, line_dash="dot",
+                                        annotation_text=bl, annotation_font_color=bc,
+                                        annotation_position="bottom right")
+                # 停利線
+                if m.get("sell1"):
+                    fig_n.add_hline(y=m["sell1"], line_color="#f44336", line_dash="dash",
+                                    annotation_text="停利1(年高-σ)",
+                                    annotation_font_color="#f44336",
+                                    annotation_position="top right")
+
+                fig_n.update_layout(
+                    paper_bgcolor="#0e1117", plot_bgcolor="#161b22",
+                    font_color="#e6edf3", height=420,
+                    margin=dict(t=15, b=30, l=40, r=20),
+                    legend=dict(orientation="h", font_size=10, y=1.02),
+                    hovermode="x unified", yaxis_title="淨值")
                 st.plotly_chart(fig_n, use_container_width=True)
 
                 # ── MK 標準差買點分析 ──
