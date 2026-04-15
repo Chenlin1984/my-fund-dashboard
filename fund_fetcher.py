@@ -4259,34 +4259,40 @@ def calc_metrics(s: pd.Series, divs: list, risk_override: dict = None) -> dict:
         # 年度高低點模式（最直觀）
         ref_high  = float(_yh)
         ref_low   = float(_yl)
-        std_amt   = round((ref_high - ref_low) / 3, 4)
-        buy_basis = ref_high
-        buy_mode  = "年度高低點"
-        print(f"[calc_metrics] 買點模式=年度高低點 年高={ref_high} 年低={ref_low} σ={std_amt}")
+        buy_mode  = "年高低點σ"
+        print(f"[calc_metrics] 買點模式=年高低點σ 年高={ref_high} 年低={ref_low}")
     else:
-        # fallback: wb07/NAV σ 模式
+        # fallback: 2年高低點 + wb07/NAV σ
         ref_high  = h2y
-        std_amt   = round(h2y * std_2y / 100, 4) if std_2y else 0
-        buy_basis = h2y
-        buy_mode  = "wb07σ" if std_2y else "1年高"
-        print(f"[calc_metrics] 買點模式={buy_mode} 基準={ref_high} σ={std_amt}")
+        ref_low   = l2y
+        buy_mode  = "2年高低點σ"
+        print(f"[calc_metrics] 買點模式=2年高低點σ 高={ref_high} 低={ref_low}")
 
-    b1 = round(buy_basis - std_amt,   4)
-    b2 = round(buy_basis - std_amt*2, 4)
-    b3 = round(buy_basis - std_amt*3, 4)
-    sell1 = round(buy_basis, 4)           # 回到年高 = 停利1
-    sell2 = round(buy_basis + std_amt, 4) # 突破年高 = 停利2
+    # ── MK v2.0 公式：σ = 年最高淨值 × std% ──────────────────
+    # σ_abs = 以現值為基礎的絕對標準差金額
+    # 估算年高 = 年最高 - σ  （保守上限）
+    # 估算年低 = 年最低 + σ  （保守下限）
+    # 買點錨定年最低，賣點錨定年最高
+    std_amt = round(ref_high * std_1y / 100, 4) if std_1y else round((ref_high - ref_low) / 4, 4)
+    std_amt = max(std_amt, 0.0001)   # 防呆：σ 不可為 0
 
-    # 目前倉位判斷
-    # 若 std_amt 極小（年高≈年低，年度資料不足），改為「資料待更新」
-    if std_amt < now * 0.001:      # σ < 0.1% of nav → 資料不可靠
+    b1    = round(ref_low + std_amt,   4)   # 年最低 + 1σ（估算年底，第一買點）
+    b2    = round(ref_low,             4)   # 年最低（觸底大買）
+    b3    = round(ref_low - std_amt,   4)   # 年最低 - 1σ（極端破底）
+    sell1 = round(ref_high - std_amt,  4)   # 年最高 - 1σ（估算年高，第一停利）
+    sell2 = round(ref_high,            4)   # 年最高（觸頂停利）
+
+    print(f"[calc_metrics] σ={std_amt} b1={b1} b2={b2} b3={b3} sell1={sell1} sell2={sell2}")
+
+    # 目前倉位判斷（以新公式區間定位）
+    if std_amt < ref_high * 0.001:   # σ < 0.1% → 資料不可靠
         pos_l, pos_c = "資料待更新 📡", "#555"
-    elif now <= b3:                pos_l, pos_c = "大跌大買 -3σ 🔥",  "#9c27b0"
-    elif now <= b2:                pos_l, pos_c = "急跌加碼 -2σ 📈",  "#00c853"
-    elif now <= b1:                pos_l, pos_c = "小跌可買 -1σ ✅",   "#69f0ae"
-    elif now >= sell2:             pos_l, pos_c = "突破年高 停利2 🔔", "#f44336"
-    elif now >= sell1 * 0.98:      pos_l, pos_c = "逼近年高 停利1 ⚠️","#ff7043"
-    else:                          pos_l, pos_c = "正常波動區",         "#888888"
+    elif now <= b3:    pos_l, pos_c = "極低破底 重倉買 🔥",   "#9c27b0"
+    elif now <= b2:    pos_l, pos_c = "觸及年低 大買 📈",     "#00c853"
+    elif now <= b1:    pos_l, pos_c = "接近年低 可買 ✅",      "#69f0ae"
+    elif now >= sell2: pos_l, pos_c = "觸及年高 停利 🔔",     "#f44336"
+    elif now >= sell1: pos_l, pos_c = "接近年高 停利1 ⚠️",    "#ff7043"
+    else:              pos_l, pos_c = "正常波動區",             "#888888"
 
     # ── 布林通道（20日 Rolling Band，作為時間序列輸出）──
     bb_period = min(20, len(s))

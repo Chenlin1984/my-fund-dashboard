@@ -4,7 +4,7 @@
 零快取：每次操作皆即時抓取，確保資料絕對最新
 """
 import streamlit as st
-import os, datetime, re
+import os, datetime, re, time as _time_mod
 import plotly.graph_objects as go
 import pandas as pd
 import numpy as np
@@ -67,6 +67,7 @@ for _k, _v in {
     "tdcc_results":[],"mj_fund_data":None,
     "portfolio_funds":[],"portfolio_core_pct":75,
     "news_items":[],"systemic_risk_data":None,
+    "api_latency_log":[],
 }.items():
     if _k not in st.session_state:
         st.session_state[_k] = _v
@@ -231,7 +232,9 @@ with tab1:
         _btn_label = "🔄 更新總經資料" if st.session_state.macro_done else "📡 載入總經資料"
         if st.button(_btn_label, type="primary", key="btn_macro_load"):
             with st.spinner("📡 從 FRED / Yahoo Finance 抓取最新指標..."):
+                _t0_macro = _time_mod.time()
                 ind   = fetch_all_indicators(FRED_KEY)
+                _macro_ms = round((_time_mod.time() - _t0_macro) * 1000)
                 phase = calc_macro_phase(ind)
                 old_phase = (st.session_state.phase_info.get("phase","")
                              if st.session_state.phase_info else "")
@@ -249,7 +252,16 @@ with tab1:
                 st.session_state.macro_last_update = _now_tw()
                 if ind and "FED_RATE" in ind:
                     set_risk_free_rate(ind["FED_RATE"].get("value",4.0) / 100)
-                st.success(f"✅ 已抓取 {len(ind)} 個指標！（{_now_tw().strftime('%H:%M')} TW）")
+                # ── 記錄 API 延遲（供 Tab5 延遲趨勢圖）──
+                _lat_log = st.session_state.get("api_latency_log", [])
+                _lat_log.append({
+                    "label":    _now_tw().strftime("%H:%M"),
+                    "macro_ms": _macro_ms,
+                    "moneydj_ms": None,
+                    "yf_ms":      None,
+                })
+                st.session_state["api_latency_log"] = _lat_log[-24:]
+                st.success(f"✅ 已抓取 {len(ind)} 個指標！（{_now_tw().strftime('%H:%M')} TW｜{_macro_ms}ms）")
             with st.spinner("📰 抓取市場新聞 + 系統性風險掃描..."):
                 try:
                     _news = fetch_market_news(max_per_feed=5)
@@ -371,6 +383,113 @@ with tab1:
                 f"<div style='flex:1;text-align:right;color:#ccc;font-size:11px'>{_adv}</div></div>"
                 f"{_trig_html}</div>", unsafe_allow_html=True)
 
+        # ── 宏觀風險溫度計（Core Protocol v2.0 Ch.3 多軸複合圖）──────
+        _pmi_s   = (ind.get("PMI")         or {}).get("series")
+        _spr_s   = (ind.get("YIELD_10Y2Y") or {}).get("series")
+        _vix_s   = (ind.get("VIX")         or {}).get("series")
+        _has_chart = any(
+            s is not None and hasattr(s, "__len__") and len(s) >= 4
+            for s in [_pmi_s, _spr_s, _vix_s])
+        if _has_chart:
+            with st.expander("📊 宏觀風險溫度計（多軸複合圖）", expanded=True):
+                from plotly.subplots import make_subplots
+                fig_mac = make_subplots(
+                    rows=2, cols=1, shared_xaxes=True,
+                    row_heights=[0.55, 0.45],
+                    vertical_spacing=0.06,
+                    specs=[[{"secondary_y": True}], [{"secondary_y": False}]])
+
+                # ── 主軸 Bar：Macro Score 各期（以 breakdown 模擬）────────
+                # 取最近 24 個月指標分數作為時序（使用各指標 value 趨勢代替）
+                _score_val = sc  # 當前總分
+                _sc_color  = "#f44336" if _score_val>=8 else ("#00c853" if _score_val>=5 else ("#64b5f6" if _score_val>=3 else "#ff9800"))
+                # 無歷史評分序列時，顯示各指標貢獻 bar（靜態橫向）
+                _ind_rows = [(k, v) for k, v in ind.items() if isinstance(v, dict) and v.get("score") is not None]
+                if _ind_rows:
+                    _bar_names = [v.get("name", k)[:10] for k, v in _ind_rows]
+                    _bar_scores = [float(v.get("score", 0)) for _, v in _ind_rows]
+                    _bar_colors = ["#00c853" if s > 0 else "#f44336" for s in _bar_scores]
+                    fig_mac.add_trace(
+                        go.Bar(x=_bar_names, y=_bar_scores,
+                               name="各指標得分", marker_color=_bar_colors,
+                               hovertemplate="%{x}: %{y:+.2f}<extra></extra>"),
+                        row=1, col=1)
+                    fig_mac.add_hline(y=0, line_color="#555", line_width=1, row=1, col=1)
+
+                # ── 副軸 Lines：殖利率利差 / VIX / PMI ────────────────────
+                import pandas as _pd_mac
+                def _safe_series(s):
+                    if s is None: return None
+                    try:
+                        if not isinstance(s, _pd_mac.Series): s = _pd_mac.Series(s)
+                        return s.dropna().tail(60)
+                    except Exception: return None
+
+                _spr_clean = _safe_series(_spr_s)
+                _vix_clean = _safe_series(_vix_s)
+                _pmi_clean = _safe_series(_pmi_s)
+
+                if _spr_clean is not None and len(_spr_clean) >= 2:
+                    fig_mac.add_trace(
+                        go.Scatter(x=list(_spr_clean.index), y=list(_spr_clean.values),
+                                   name="10Y-2Y利差(%)", mode="lines",
+                                   line=dict(color="#64b5f6", width=1.5),
+                                   hovertemplate="%{y:.3f}%<extra>10Y-2Y</extra>"),
+                        row=2, col=1)
+                    # 倒掛警戒線
+                    fig_mac.add_hline(y=0, line_color="#f44336", line_dash="dash",
+                                      line_width=1, row=2, col=1,
+                                      annotation_text="倒掛警戒",
+                                      annotation_font_color="#f44336",
+                                      annotation_position="bottom right")
+
+                if _vix_clean is not None and len(_vix_clean) >= 2:
+                    fig_mac.add_trace(
+                        go.Scatter(x=list(_vix_clean.index), y=list(_vix_clean.values),
+                                   name="VIX恐慌", mode="lines",
+                                   line=dict(color="#ff9800", width=1.5, dash="dot"),
+                                   hovertemplate="%{y:.1f}<extra>VIX</extra>"),
+                        row=2, col=1)
+
+                if _pmi_clean is not None and len(_pmi_clean) >= 2:
+                    fig_mac.add_trace(
+                        go.Scatter(x=list(_pmi_clean.index), y=list(_pmi_clean.values),
+                                   name="PMI製造業", mode="lines",
+                                   line=dict(color="#ce93d8", width=1.5, dash="dashdot"),
+                                   hovertemplate="%{y:.1f}<extra>PMI</extra>"),
+                        row=2, col=1)
+                    fig_mac.add_hline(y=50, line_color="#888", line_dash="dot",
+                                      line_width=1, row=2, col=1,
+                                      annotation_text="50榮枯線",
+                                      annotation_font_color="#888",
+                                      annotation_position="bottom right")
+
+                fig_mac.update_layout(
+                    paper_bgcolor="#0e1117", plot_bgcolor="#161b22",
+                    font_color="#e6edf3", height=480,
+                    margin=dict(t=15, b=20, l=50, r=20),
+                    legend=dict(orientation="h", font_size=10, y=1.03),
+                    hovermode="x unified",
+                    bargap=0.15)
+                fig_mac.update_yaxes(title_text="指標得分", row=1, col=1,
+                                     gridcolor="#1e2a3a")
+                fig_mac.update_yaxes(title_text="指標數值", row=2, col=1,
+                                     gridcolor="#1e2a3a")
+                fig_mac.update_xaxes(gridcolor="#1e2a3a")
+                st.plotly_chart(fig_mac, use_container_width=True)
+
+                # 研判結論
+                _res_txt = ""
+                if _score_val >= 8:
+                    _res_txt = "🔥 **擴張/高峰期**：居高思危，股 40% / 債 40% / 現金 20%。獲利轉入核心穩健配息基金。"
+                elif _score_val >= 5:
+                    _res_txt = "🌱 **復甦/擴張期**：積極佈局，股 60% / 債 30% / 現金 10%。衛星主攻成長題材。"
+                elif _score_val >= 3:
+                    _res_txt = "🍂 **衰退轉復甦**：防禦轉進，股 40% / 債 40% / 現金 20%。聚焦核心配息資產。"
+                else:
+                    _res_txt = "❄️ **衰退期**：現金為王，股 20% / 債 50% / 現金 30%。嚴格檢視吃本金風險。"
+                st.info(_res_txt)
+
         # ── 指標貢獻明細（折疊）──
         with st.expander("📊 各指標貢獻明細", expanded=False):
             _rows = []
@@ -403,19 +522,33 @@ with tab1:
         # ── AI 結構化總經摘要 ──
         st.divider()
         if GEMINI_KEY:
-            if st.button("🤖 AI 結構化總經摘要", key="btn_macro_ai", type="primary"):
-                with st.spinner("Gemini 生成【現狀解讀】【系統性風險】【觀察重點】中..."):
-                    try:
-                        _ai_txt = analyze_macro_structured(
-                            api_key      = GEMINI_KEY,
-                            indicators   = ind,
-                            phase_info   = phase,
-                            news_items   = st.session_state.get("news_items",[]),
-                            systemic_risk= st.session_state.get("systemic_risk_data"),
-                        )
-                        st.session_state.macro_ai = _ai_txt
-                    except Exception as _e:
-                        st.error(f"AI 分析失敗：{_e}")
+            # ── 三色燈號阻斷（Core Protocol v2.0 Ch.1）─────────────
+            _ai_mac_pct = st.session_state.get("data_health_pct", 100)
+            _ai_mac_tl  = st.session_state.get("data_health_traffic", "🟢")
+            if _ai_mac_pct < 50:
+                st.markdown(
+                    "<div style='border-left:4px solid #f44336;background:#1a1f2e;"
+                    "border-radius:0 8px 8px 0;padding:10px 14px;font-size:13px'>"
+                    "🔴 <b>紅燈阻斷</b>：總經資料完整率 "
+                    f"<b>{_ai_mac_pct}%</b>（&lt;50%），AI 分析停用。"
+                    "請前往「🔬 資料診斷」頁確認指標載入狀況。</div>",
+                    unsafe_allow_html=True)
+            else:
+                if _ai_mac_pct < 80:
+                    st.warning(f"🟡 資料完整率 **{_ai_mac_pct}%**（黃燈），AI 結果參考性降低。")
+                if st.button("🤖 AI 結構化總經摘要", key="btn_macro_ai", type="primary"):
+                    with st.spinner("Gemini 生成【現狀解讀】【系統性風險】【觀察重點】中..."):
+                        try:
+                            _ai_txt = analyze_macro_structured(
+                                api_key      = GEMINI_KEY,
+                                indicators   = ind,
+                                phase_info   = phase,
+                                news_items   = st.session_state.get("news_items",[]),
+                                systemic_risk= st.session_state.get("systemic_risk_data"),
+                            )
+                            st.session_state.macro_ai = _ai_txt
+                        except Exception as _e:
+                            st.error(f"AI 分析失敗：{_e}")
             if st.session_state.macro_ai:
                 st.markdown(st.session_state.macro_ai)
         else:
@@ -518,17 +651,96 @@ with tab2:
                         f"<div style='flex:1'><div style='color:#888;font-size:11px'>景氣位階（{phase_info_s['phase']} {phase_info_s['score']}/10）</div>"
                         f"<div style='font-size:12px;color:#c9d1d9'>{sig['reason']}</div></div></div>", unsafe_allow_html=True)
 
-                # 淨值走勢圖
-                st.markdown("### 📈 淨值走勢 + MK 買點")
+                # 淨值走勢圖（Bollinger Bands + 配息標記 v2.0）
+                st.markdown("### 📈 淨值走勢 + 布林通道 + 配息標記")
                 df_show = s.reset_index(); df_show.columns = ["date","nav"]
                 fig_n = go.Figure()
-                fig_n.add_trace(go.Scatter(x=df_show["date"],y=df_show["nav"],name="淨值",line=dict(color="#2196f3",width=1.5)))
-                _ma20 = s.rolling(20).mean(); _ma60 = s.rolling(60).mean()
-                fig_n.add_trace(go.Scatter(x=_ma20.index,y=_ma20.values,name="MA20",line=dict(color="#ff9800",width=1,dash="dot")))
-                fig_n.add_trace(go.Scatter(x=_ma60.index,y=_ma60.values,name="MA60",line=dict(color="#9c27b0",width=1,dash="dot")))
-                for bv, bl, bc in [(m.get("buy1"),f"買1(-1σ)","#69f0ae"),(m.get("buy2"),f"買2(-2σ)","#00c853"),(m.get("buy3"),f"買3(-3σ)","#9c27b0")]:
-                    if bv: fig_n.add_hline(y=bv,line_color=bc,line_dash="dot",annotation_text=bl,annotation_font_color=bc,annotation_position="bottom right")
-                fig_n.update_layout(paper_bgcolor="#0e1117",plot_bgcolor="#161b22",font_color="#e6edf3",height=370,margin=dict(t=15,b=30,l=40,r=20),legend=dict(orientation="h",font_size=10,y=1.02),hovermode="x unified",yaxis_title="淨值")
+
+                # ── Bollinger Bands（MA20 ±2σ，半透明填色）──────────────
+                _bb_period = min(20, len(s))
+                _bb_ma  = s.rolling(_bb_period).mean()
+                _bb_std = s.rolling(_bb_period).std()
+                _bb_up  = (_bb_ma + 2 * _bb_std).dropna()
+                _bb_dn  = (_bb_ma - 2 * _bb_std).dropna()
+                # 上軌（填色基準，先畫，不顯示圖例線條）
+                fig_n.add_trace(go.Scatter(
+                    x=_bb_up.index, y=_bb_up.values, name="BB上軌",
+                    line=dict(color="rgba(33,150,243,0.25)", width=1),
+                    showlegend=False))
+                # 下軌 + fill to 上軌（半透明藍色通道）
+                fig_n.add_trace(go.Scatter(
+                    x=_bb_dn.index, y=_bb_dn.values, name="布林通道(±2σ)",
+                    fill="tonexty",
+                    fillcolor="rgba(33,150,243,0.08)",
+                    line=dict(color="rgba(33,150,243,0.25)", width=1)))
+                # MA20 中軌
+                fig_n.add_trace(go.Scatter(
+                    x=_bb_ma.dropna().index, y=_bb_ma.dropna().values,
+                    name="MA20", line=dict(color="#ff9800", width=1, dash="dot")))
+                # MA60
+                _ma60 = s.rolling(60).mean()
+                fig_n.add_trace(go.Scatter(
+                    x=_ma60.dropna().index, y=_ma60.dropna().values,
+                    name="MA60", line=dict(color="#9c27b0", width=1, dash="dot")))
+                # 淨值主線（最後畫，在最上層）
+                fig_n.add_trace(go.Scatter(
+                    x=df_show["date"], y=df_show["nav"],
+                    name="淨值", line=dict(color="#2196f3", width=1.8)))
+
+                # ── 配息標記 💰（除息日垂直虛線 + marker）───────────────
+                _chart_divs = mj_raw.get("dividends") or []
+                _chart_divs = _chart_divs if isinstance(_chart_divs, list) else []
+                _div_dates, _div_navs, _div_texts = [], [], []
+                for _cd in _chart_divs:
+                    try:
+                        _cd_date = pd.Timestamp(_cd.get("date",""))
+                        if _cd_date in s.index:
+                            _cd_nav = float(s.loc[_cd_date])
+                        else:
+                            # 找最近交易日
+                            _near = s.index[s.index.get_indexer([_cd_date], method="nearest")[0]]
+                            _cd_nav = float(s.loc[_near])
+                            _cd_date = _near
+                        _cd_amt = _cd.get("amount") or _cd.get("dividend") or ""
+                        _div_dates.append(_cd_date)
+                        _div_navs.append(_cd_nav)
+                        _div_texts.append(f"💰 配息 {_cd_amt}" if _cd_amt else "💰 配息")
+                    except Exception:
+                        continue
+                if _div_dates:
+                    fig_n.add_trace(go.Scatter(
+                        x=_div_dates, y=_div_navs,
+                        mode="markers+text",
+                        name="配息日",
+                        marker=dict(symbol="triangle-up", size=10, color="#ffd600"),
+                        text=_div_texts,
+                        textposition="top center",
+                        textfont=dict(size=9, color="#ffd600"),
+                        hovertemplate="%{text}<br>淨值：%{y:.4f}<extra></extra>"))
+
+                # ── MK 買點水平線 ───────────────────────────────────────
+                for bv, bl, bc in [
+                    (m.get("buy1"), "買1(年低+σ)", "#69f0ae"),
+                    (m.get("buy2"), "買2(年低)",   "#00c853"),
+                    (m.get("buy3"), "買3(年低-σ)", "#9c27b0"),
+                ]:
+                    if bv:
+                        fig_n.add_hline(y=bv, line_color=bc, line_dash="dot",
+                                        annotation_text=bl, annotation_font_color=bc,
+                                        annotation_position="bottom right")
+                # 停利線
+                if m.get("sell1"):
+                    fig_n.add_hline(y=m["sell1"], line_color="#f44336", line_dash="dash",
+                                    annotation_text="停利1(年高-σ)",
+                                    annotation_font_color="#f44336",
+                                    annotation_position="top right")
+
+                fig_n.update_layout(
+                    paper_bgcolor="#0e1117", plot_bgcolor="#161b22",
+                    font_color="#e6edf3", height=420,
+                    margin=dict(t=15, b=30, l=40, r=20),
+                    legend=dict(orientation="h", font_size=10, y=1.02),
+                    hovermode="x unified", yaxis_title="淨值")
                 st.plotly_chart(fig_n, use_container_width=True)
 
                 # ── MK 標準差買點分析 ──
@@ -539,7 +751,7 @@ with tab2:
                 _m_nav_v = float(m.get("nav") or 0)
                 if _m_buy1:
                     _buy_rows = ""
-                    for _bv, _bl, _bc in [(_m_buy1,"-1σ 小跌可買","#69f0ae"),(_m_buy2,"-2σ 急跌加碼","#00c853"),(_m_buy3,"-3σ 大跌大買","#9c27b0")]:
+                    for _bv, _bl, _bc in [(_m_buy1,"年低+1σ 可買","#69f0ae"),(_m_buy2,"年低 大買","#00c853"),(_m_buy3,"年低-1σ 破底買","#9c27b0")]:
                         if _bv:
                             _dist = round(abs(_m_nav_v - _bv), 4) if _m_nav_v else 0
                             _dir  = "▲" if _m_nav_v > _bv else "▼"
@@ -660,14 +872,27 @@ with tab2:
                 # AI 基金分析
                 st.divider()
                 if GEMINI_KEY:
-                    if st.button("🤖 AI 基金分析", key="btn_fund_ai"):
-                        with st.spinner("Gemini 分析中..."):
-                            try:
-                                _ai = analyze_fund_json(GEMINI_KEY, name or fk, m,
-                                    mj_raw.get("perf",{}), phase_info_s, divs)
-                                st.session_state.fund_ai_txt = _ai
-                            except Exception as _e:
-                                st.error(f"AI 分析失敗：{_e}")
+                    # ── 三色燈號阻斷（Core Protocol v2.0 Ch.1）─────────
+                    _ai_fd_pct = st.session_state.get("data_health_pct", 100)
+                    if _ai_fd_pct < 50:
+                        st.markdown(
+                            "<div style='border-left:4px solid #f44336;background:#1a1f2e;"
+                            "border-radius:0 8px 8px 0;padding:10px 14px;font-size:13px'>"
+                            "🔴 <b>紅燈阻斷</b>：總經資料完整率 "
+                            f"<b>{_ai_fd_pct}%</b>（&lt;50%），AI 基金分析停用。"
+                            "請前往「🔬 資料診斷」確認指標載入狀況。</div>",
+                            unsafe_allow_html=True)
+                    else:
+                        if _ai_fd_pct < 80:
+                            st.warning(f"🟡 資料完整率 **{_ai_fd_pct}%**（黃燈），AI 結果參考性降低。")
+                        if st.button("🤖 AI 基金分析", key="btn_fund_ai"):
+                            with st.spinner("Gemini 分析中..."):
+                                try:
+                                    _ai = analyze_fund_json(GEMINI_KEY, name or fk, m,
+                                        mj_raw.get("perf",{}), phase_info_s, divs)
+                                    st.session_state.fund_ai_txt = _ai
+                                except Exception as _e:
+                                    st.error(f"AI 分析失敗：{_e}")
                     if st.session_state.get("fund_ai_txt"):
                         st.markdown(st.session_state.fund_ai_txt)
 
@@ -698,6 +923,88 @@ with tab3:
             f"<div><div style='color:#ff9800;font-size:11px'>⚡ 衛星資產</div><div style='color:#ff9800;font-size:28px;font-weight:900'>{100-_core_pct:.1f}%</div></div>"
             f"<div><div style='color:{_dc};font-size:11px'>目標偏差</div><div style='color:{_dc};font-size:28px;font-weight:900'>{_diff:+.1f}%</div></div>"
             f"</div></div>", unsafe_allow_html=True)
+
+        # ── 核心/衛星甜甜圈圖（Core Protocol v2.0 Ch.4）────────────
+        _dn_col, _dn_info = st.columns([1, 1])
+        with _dn_col:
+            _dn_labels = [
+                (f.get("code","?")[:8] + " 🛡️" if f.get("is_core") else f.get("code","?")[:8] + " ⚡")
+                for f in _pf_loaded]
+            _dn_values = [max(f.get("invest_twd", 0) or 0, 0) for f in _pf_loaded]
+            _dn_colors = ["#64b5f6" if f.get("is_core") else "#ff9800" for f in _pf_loaded]
+            _alert     = abs(_diff) > 10
+            _bg_c      = "#1a0808" if _alert else "#0e1117"
+            fig_dn = go.Figure()
+            if sum(_dn_values) > 0:
+                fig_dn.add_trace(go.Pie(
+                    labels    = _dn_labels,
+                    values    = _dn_values,
+                    hole      = 0.55,
+                    marker    = dict(colors=_dn_colors,
+                                     line=dict(color="#0e1117", width=2)),
+                    textinfo  = "label+percent",
+                    textfont  = dict(size=10),
+                    hovertemplate="%{label}: NT$%{value:,.0f} (%{percent})<extra></extra>",
+                    domain    = dict(x=[0.05, 0.95], y=[0.05, 0.95]),
+                ))
+                # 偏移 >10%：外圈紅色警戒環
+                if _alert:
+                    fig_dn.add_trace(go.Pie(
+                        labels   = ["⚠️ 配置偏離"],
+                        values   = [1],
+                        hole     = 0.88,
+                        marker   = dict(colors=["rgba(244,67,54,0.25)"],
+                                        line=dict(color="#f44336", width=3)),
+                        textinfo = "none",
+                        hoverinfo= "none",
+                        showlegend= False,
+                        domain   = dict(x=[0, 1], y=[0, 1]),
+                    ))
+            # 中央標註
+            fig_dn.update_layout(
+                paper_bgcolor = _bg_c,
+                plot_bgcolor  = _bg_c,
+                font_color    = "#e6edf3",
+                height        = 270,
+                margin        = dict(t=20, b=10, l=10, r=10),
+                showlegend    = False,
+                annotations   = [dict(
+                    text      = f"<b>{_core_pct}%</b><br>核心",
+                    x=0.5, y=0.5, font_size=16,
+                    showarrow = False,
+                    font      = dict(color="#64b5f6"))],
+            )
+            st.plotly_chart(fig_dn, use_container_width=True)
+
+        with _dn_info:
+            st.markdown("<div style='height:20px'></div>", unsafe_allow_html=True)
+            _target2 = st.session_state.get("portfolio_core_pct", 75)
+            if _alert:
+                st.error(
+                    f"⚠️ **配置偏離警告**\n\n"
+                    f"現核心 **{_core_pct}%** vs 目標 **{_target2}%**，"
+                    f"偏差 **{_diff:+.1f}%**（>10%）。\n\n"
+                    f"{'核心過重：建議贖回核心基金，轉入衛星資產。' if _diff > 0 else '衛星過重：建議獲利了結衛星，補回核心配置。'}"
+                )
+            else:
+                st.success(
+                    f"✅ **配置健康**\n\n"
+                    f"核心 **{_core_pct}%** / 衛星 **{100-_core_pct:.1f}%**，"
+                    f"偏差 {_diff:+.1f}%（目標 {_target2}%±10%）"
+                )
+            # 各基金市值明細
+            st.markdown("<div style='margin-top:12px;font-size:12px;color:#888'>持倉明細</div>",
+                        unsafe_allow_html=True)
+            for _pfi in _pf_loaded:
+                _pfi_role  = "🛡️" if _pfi.get("is_core") else "⚡"
+                _pfi_pct   = round(_pfi.get("invest_twd",0) / _tot * 100, 1) if _tot else 0
+                _pfi_c     = "#64b5f6" if _pfi.get("is_core") else "#ff9800"
+                st.markdown(
+                    f"<div style='display:flex;justify-content:space-between;"
+                    f"font-size:11px;padding:3px 0;border-bottom:1px solid #1e2a3a'>"
+                    f"<span style='color:{_pfi_c}'>{_pfi_role} {_pfi.get('code','?')}</span>"
+                    f"<span style='color:#ccc'>{_pfi_pct}%</span></div>",
+                    unsafe_allow_html=True)
 
     st.markdown("### ➕ 加入基金")
     c_code, c_inv, c_add = st.columns([3,2,1])
@@ -798,8 +1105,81 @@ with tab3:
             "目標核心資產比例（%）", 50, 90,
             st.session_state.get("portfolio_core_pct",75), 5, key="slider_core_pct")
 
-        # ── 以息養股雙模式現金流試算（Core Protocol Ch.3.3）──
+        # ── 真實收益長條圖（Core Protocol v2.0 Ch.4）────────────────
         _loaded_pf = [f for f in pf if f.get("loaded") and not f.get("load_error")]
+        if _loaded_pf:
+            st.divider()
+            st.markdown("### 📊 真實收益 vs 配息率健康矩陣")
+            st.caption("長條高度 < 紅虛線 → 含息報酬不足以支撐配息 → 吃本金警示")
+
+            _rc_names, _rc_ret, _rc_div = [], [], []
+            for _f in _loaded_pf:
+                _mj  = _f.get("moneydj_raw", {}) or {}
+                _m   = _f.get("metrics", {}) or {}
+                _pf2 = _mj.get("perf", {}) or {}
+                _name = (_f.get("name") or _f["code"])[:18]
+                try:
+                    _ret = float(_pf2.get("1Y") or _m.get("ret_1y") or 0)
+                except Exception:
+                    _ret = 0.0
+                try:
+                    _div = float(_mj.get("moneydj_div_yield") or _m.get("annual_div_rate") or 0)
+                except Exception:
+                    _div = 0.0
+                _rc_names.append(_name)
+                _rc_ret.append(round(_ret, 2))
+                _rc_div.append(round(_div, 2))
+
+            if _rc_names:
+                _rc_colors = []
+                for _r, _d in zip(_rc_ret, _rc_div):
+                    if _d > 0 and _r < _d:
+                        _rc_colors.append("#f44336")   # 吃本金 → 紅
+                    elif _d > 0 and _r < _d * 1.2:
+                        _rc_colors.append("#ff9800")   # 邊緣 → 橙
+                    else:
+                        _rc_colors.append("#00c853")   # 健康 → 綠
+
+                fig_rc = go.Figure()
+                # 含息報酬率長條
+                fig_rc.add_trace(go.Bar(
+                    x=_rc_names, y=_rc_ret,
+                    name="含息報酬率(1Y)%",
+                    marker_color=_rc_colors,
+                    text=[f"{v:.1f}%" for v in _rc_ret],
+                    textposition="outside",
+                    hovertemplate="%{x}<br>含息報酬：%{y:.2f}%<extra></extra>"))
+                # 配息年化率紅色點線
+                if any(d > 0 for d in _rc_div):
+                    fig_rc.add_trace(go.Scatter(
+                        x=_rc_names, y=_rc_div,
+                        name="配息年化率%",
+                        mode="markers+lines",
+                        line=dict(color="#f44336", width=1.5, dash="dot"),
+                        marker=dict(symbol="diamond", size=8, color="#f44336"),
+                        hovertemplate="%{x}<br>配息率：%{y:.2f}%<extra></extra>"))
+                # 零基準線
+                fig_rc.add_hline(y=0, line_color="#555", line_width=1)
+                fig_rc.update_layout(
+                    paper_bgcolor="#0e1117", plot_bgcolor="#161b22",
+                    font_color="#e6edf3", height=320,
+                    margin=dict(t=30, b=20, l=40, r=20),
+                    legend=dict(orientation="h", font_size=10, y=1.08),
+                    yaxis_title="報酬率 / 配息率 (%)",
+                    bargap=0.35, hovermode="x unified")
+                st.plotly_chart(fig_rc, use_container_width=True)
+
+                # 吃本金統計摘要
+                _eat_n = sum(1 for r, d in zip(_rc_ret, _rc_div) if d > 0 and r < d)
+                _ok_n  = len(_rc_names) - _eat_n
+                _sc1, _sc2, _sc3 = st.columns(3)
+                _sc1.metric("組合基金數", len(_rc_names))
+                _sc2.metric("✅ 現金流健康", _ok_n)
+                _sc3.metric("🔴 吃本金警示", _eat_n,
+                            delta=f"-{_eat_n} 檔需檢視" if _eat_n else None,
+                            delta_color="inverse")
+
+        # ── 以息養股雙模式現金流試算（Core Protocol Ch.3.3）──
         if _loaded_pf:
             st.divider(); st.markdown("### 💰 以息養股現金流試算")
             _cf_tab_new, _cf_tab_hold = st.tabs(["🛒 新購試算", "📦 現有持倉"])
@@ -1212,6 +1592,188 @@ with tab5:
             f"衰退率：<b style='color:#e6edf3'>{_d5_phase.get('rec_prob','?')}%</b>"
             f"</div>", unsafe_allow_html=True)
 
+    # ── 三色燈號：存入 session_state 供 AI 阻斷機制使用 ──────────
+    _d5_traffic = "🔴" if _d5_pct < 50 else ("🟡" if _d5_pct < 80 else "🟢")
+    st.session_state["data_health_pct"]     = _d5_pct
+    st.session_state["data_health_traffic"] = _d5_traffic
+
+    # ── 資料完整度熱力圖（Core Protocol v2.0 Ch.1）────────────────
+    if _d5_ind:
+        with st.expander("🌡️ 資料完整度熱力圖（近30日 × 14指標）", expanded=True):
+            import pandas as _pd_hm
+            import numpy as _np_hm
+            from datetime import datetime as _dt_hm, timedelta as _td_hm
+            _today_hm = _dt_hm.today().date()
+            _days_hm  = [(_today_hm - _td_hm(days=i)) for i in range(29, -1, -1)]
+            _ind_keys = [r[0] for r in _D5_EXPECTED]
+            _ind_lbls = [r[1][:12] for r in _D5_EXPECTED]
+
+            # 建立 30×N 矩陣：0=缺失, 0.5=資料陳舊(>14天), 1=正常
+            _hm_z   = []
+            _hm_txt = []
+            for _ik, _inm in zip(_ind_keys, _ind_lbls):
+                _iv  = _d5_ind.get(_ik, {}) or {}
+                _row_z, _row_t = [], []
+                # 取指標最新資料日期
+                _idate_raw = _iv.get("date", "")
+                _idate = None
+                if _idate_raw:
+                    try:
+                        _idate = _pd_hm.to_datetime(str(_idate_raw)).date()
+                    except Exception:
+                        _idate = None
+                # 若有 series，取最後有效日
+                _iser = _iv.get("series")
+                if _iser is not None:
+                    try:
+                        _s_pd = _pd_hm.Series(_iser).dropna()
+                        if len(_s_pd) > 0:
+                            _idate = _pd_hm.to_datetime(_s_pd.index[-1]).date()
+                    except Exception:
+                        pass
+                for _d in _days_hm:
+                    if _idate is None or _iv.get("value") is None:
+                        _row_z.append(0.0)
+                        _row_t.append("缺失")
+                    else:
+                        _age = (_today_hm - _idate).days  # 最新資料距今
+                        # 對於「歷史日 d」而言：若 _idate >= d，代表那天之後有資料
+                        if _idate >= _d:
+                            _row_z.append(1.0)
+                            _row_t.append(f"有資料\n(截至{_idate})")
+                        elif (_today_hm - _d).days <= 14 and _age <= 45:
+                            # 近14天且資料不超過45天舊 → 橙色（資料合理但非即時）
+                            _row_z.append(0.5)
+                            _row_t.append(f"延遲更新\n(上次{_idate})")
+                        else:
+                            _row_z.append(0.0)
+                            _row_t.append(f"缺失\n(上次{_idate or '無'})")
+                _hm_z.append(_row_z)
+                _hm_txt.append(_row_t)
+
+            _hm_x = [str(_d) for _d in _days_hm]
+            _fig_hm = go.Figure(go.Heatmap(
+                z         = _hm_z,
+                x         = _hm_x,
+                y         = _ind_lbls,
+                text      = _hm_txt,
+                texttemplate = "",
+                colorscale= [[0.0, "#f44336"], [0.5, "#ff9800"], [1.0, "#00c853"]],
+                zmin=0, zmax=1,
+                showscale = True,
+                colorbar  = dict(
+                    tickvals=[0, 0.5, 1],
+                    ticktext=["缺失", "延遲", "正常"],
+                    len=0.6, thickness=10,
+                    title=dict(text="狀態", side="right")),
+                hovertemplate="指標: %{y}<br>日期: %{x}<br>%{text}<extra></extra>",
+            ))
+            _fig_hm.update_layout(
+                paper_bgcolor="#0e1117", plot_bgcolor="#161b22",
+                font_color="#e6edf3",
+                height=max(280, len(_ind_keys) * 22 + 80),
+                margin=dict(t=10, b=60, l=110, r=80),
+                xaxis=dict(tickangle=-45, tickfont_size=9,
+                           nticks=10, gridcolor="#1e2a3a"),
+                yaxis=dict(tickfont_size=10, autorange="reversed"),
+            )
+            st.plotly_chart(_fig_hm, use_container_width=True)
+
+            # 三色燈號說明
+            _tl_color = "#f44336" if _d5_pct < 50 else ("#ff9800" if _d5_pct < 80 else "#00c853")
+            _tl_msg   = (
+                "🔴 **紅燈（< 50%）**：資料嚴重不足，AI 分析已停用。請先於 Tab1 載入總經資料。"
+                if _d5_pct < 50 else (
+                "🟡 **黃燈（50-79%）**：部分指標缺失，AI 分析仍可執行，但結果參考性降低。"
+                if _d5_pct < 80 else
+                "🟢 **綠燈（≥ 80%）**：資料完整，AI 分析正常啟用。"
+            ))
+            st.markdown(
+                f"<div style='border-left:4px solid {_tl_color};"
+                f"background:#1a1f2e;border-radius:0 8px 8px 0;padding:10px 14px;"
+                f"margin-top:8px;font-size:13px'>{_tl_msg}</div>",
+                unsafe_allow_html=True)
+
+    # ── Section 1b: API 延遲趨勢圖（Core Protocol v2.0 Ch.1）────────
+    with st.expander("📡 API 連線延遲趨勢（近24次）", expanded=False):
+        import requests as _req_lat
+        # 手動測速按鈕
+        if st.button("🕐 立即測試三源連線速度", key="btn_d5_ping"):
+            _proxy = get_proxy_config() or {}
+            _kw    = dict(proxies=_proxy, timeout=8, verify=False,
+                          headers={"User-Agent": "Mozilla/5.0"})
+            _ping_results: dict = {}
+            for _src, _url in [
+                ("FRED",     "https://fred.stlouisfed.org/"),
+                ("MoneyDJ",  "https://www.moneydj.com/"),
+                ("Yahoo/yf", "https://finance.yahoo.com/"),
+            ]:
+                try:
+                    _t0p = _time_mod.time()
+                    _req_lat.get(_url, **_kw)
+                    _ping_results[_src] = round((_time_mod.time() - _t0p) * 1000)
+                except Exception as _pe:
+                    _ping_results[_src] = None  # 無法連線
+            _lat_log_p = st.session_state.get("api_latency_log", [])
+            _lat_log_p.append({
+                "label":      _now_tw().strftime("%H:%M"),
+                "macro_ms":   _ping_results.get("FRED"),
+                "moneydj_ms": _ping_results.get("MoneyDJ"),
+                "yf_ms":      _ping_results.get("Yahoo/yf"),
+            })
+            st.session_state["api_latency_log"] = _lat_log_p[-24:]
+            # 即時顯示結果
+            _pcols = st.columns(3)
+            for _ci, (_sn, _ms) in enumerate(_ping_results.items()):
+                _col_c = "#00c853" if (_ms and _ms < 1000) else ("#ff9800" if (_ms and _ms < 3000) else "#f44336")
+                _pcols[_ci].markdown(
+                    f"<div style='background:#1a1f2e;border-radius:8px;padding:10px;text-align:center'>"
+                    f"<div style='font-size:11px;color:#888'>{_sn}</div>"
+                    f"<div style='font-size:20px;font-weight:700;color:{_col_c}'>"
+                    f"{'N/A' if _ms is None else f'{_ms} ms'}</div></div>",
+                    unsafe_allow_html=True)
+
+        # 延遲折線圖
+        _lat_hist = st.session_state.get("api_latency_log", [])
+        if len(_lat_hist) >= 2:
+            _lh_x    = [r.get("label","") for r in _lat_hist]
+            _lh_fred = [r.get("macro_ms")   for r in _lat_hist]
+            _lh_mj   = [r.get("moneydj_ms") for r in _lat_hist]
+            _lh_yf   = [r.get("yf_ms")      for r in _lat_hist]
+            _fig_lat  = go.Figure()
+            for _lt_name, _lt_y, _lt_color in [
+                ("FRED/yfinance(載入)", _lh_fred, "#64b5f6"),
+                ("MoneyDJ(測速)",       _lh_mj,   "#ff9800"),
+                ("Yahoo/yf(測速)",      _lh_yf,   "#ce93d8"),
+            ]:
+                if any(v is not None for v in _lt_y):
+                    _fig_lat.add_trace(go.Scatter(
+                        x=_lh_x, y=_lt_y, name=_lt_name, mode="lines+markers",
+                        line=dict(color=_lt_color, width=1.8),
+                        marker=dict(size=5),
+                        connectgaps=True,
+                        hovertemplate="%{y} ms<extra>" + _lt_name + "</extra>"))
+            # 警戒線：1000ms 黃 / 3000ms 紅
+            _fig_lat.add_hline(y=1000, line_color="#ff9800", line_dash="dot",
+                               line_width=1, annotation_text="1s 警示",
+                               annotation_font_color="#ff9800",
+                               annotation_position="bottom right")
+            _fig_lat.add_hline(y=3000, line_color="#f44336", line_dash="dash",
+                               line_width=1, annotation_text="3s 警戒",
+                               annotation_font_color="#f44336",
+                               annotation_position="bottom right")
+            _fig_lat.update_layout(
+                paper_bgcolor="#0e1117", plot_bgcolor="#161b22",
+                font_color="#e6edf3", height=260,
+                margin=dict(t=10, b=40, l=60, r=20),
+                xaxis=dict(tickangle=-30, tickfont_size=9, gridcolor="#1e2a3a"),
+                yaxis=dict(title="回應時間 (ms)", gridcolor="#1e2a3a"),
+                legend=dict(orientation="h", font_size=10, y=1.05),
+                hovermode="x unified")
+            st.plotly_chart(_fig_lat, use_container_width=True)
+        else:
+            st.info("尚無延遲記錄。點擊「立即測試」或先於 Tab1 載入總經資料，系統將自動記錄 FRED/yfinance 回應時間。")
+
     st.divider()
 
     # ── Section 2: API Key 狀態 ───────────────────────────────────
@@ -1301,7 +1863,9 @@ with tab5:
             _d5_sects = _d5_hold.get("sector_alloc", []) or []
             _d5_tops  = _d5_hold.get("top_holdings", []) or []
 
-            _d5_raw_s = _d5_fd.get("series") or _d5_mj.get("series")
+            _d5_raw_s = _d5_fd.get("series")
+            if _d5_raw_s is None:
+                _d5_raw_s = _d5_mj.get("series")
             try:
                 import pandas as _pd_d5
                 _d5_slen = len(_d5_raw_s) if isinstance(_d5_raw_s, _pd_d5.Series) else 0
