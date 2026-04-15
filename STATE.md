@@ -3,9 +3,9 @@
 
 ## 📌 當前狀態
 - **環境**: Streamlit Cloud + GitHub
-- **進度**: ✅ Core Protocol v2.0 視覺化升級 **全部完成**（V2-0 ～ V2-4）
+- **進度**: ✅ Core Protocol v2.0 視覺化升級 **全部完成**（V2-0 ～ V2-6）
 - **工作分支**: `claude/system-detox-upgrade-ra7Tp`
-- **app.py**: 2010 行，6 tabs，AST OK
+- **app.py**: 2184 行，6 tabs，AST OK
 
 ## 🎯 當前任務 C：Core Protocol v2.0 視覺化升級
 
@@ -29,7 +29,7 @@
 | V2-3 | Tab1 宏觀風險溫度計：Macro Score(bar) + 10Y-2Y利差/VIX/PMI(3條線) 多軸圖 | ✅ 完成 |
 | V2-4 | Tab5 資料完整度熱力圖（30日×14指標 Heatmap）+ 三色燈號阻斷AI分析 | ✅ 完成 |
 | V2-5 | Tab5 API 延遲趨勢圖：FRED/MoneyDJ/Yahoo 三源折線 + 1s/3s 警戒線 + 立即測速按鈕 | ✅ 完成 |
-| V2-6 | Tab3 核心/衛星甜甜圈圖（Donut Chart）+ 偏移 >10% 紅色閃爍警告 | ⏳ 待執行 |
+| V2-6 | Tab3 核心/衛星甜甜圈圖（Donut Chart）+ 偏移 >10% 紅色閃爍警告 | ✅ 完成 |
 
 ### 設計規範
 - **禁止**：`@st.cache_data`、ETF 相關模組、虛擬測試數值

@@ -924,6 +924,88 @@ with tab3:
             f"<div><div style='color:{_dc};font-size:11px'>目標偏差</div><div style='color:{_dc};font-size:28px;font-weight:900'>{_diff:+.1f}%</div></div>"
             f"</div></div>", unsafe_allow_html=True)
 
+        # ── 核心/衛星甜甜圈圖（Core Protocol v2.0 Ch.4）────────────
+        _dn_col, _dn_info = st.columns([1, 1])
+        with _dn_col:
+            _dn_labels = [
+                (f.get("code","?")[:8] + " 🛡️" if f.get("is_core") else f.get("code","?")[:8] + " ⚡")
+                for f in _pf_loaded]
+            _dn_values = [max(f.get("invest_twd", 0) or 0, 0) for f in _pf_loaded]
+            _dn_colors = ["#64b5f6" if f.get("is_core") else "#ff9800" for f in _pf_loaded]
+            _alert     = abs(_diff) > 10
+            _bg_c      = "#1a0808" if _alert else "#0e1117"
+            fig_dn = go.Figure()
+            if sum(_dn_values) > 0:
+                fig_dn.add_trace(go.Pie(
+                    labels    = _dn_labels,
+                    values    = _dn_values,
+                    hole      = 0.55,
+                    marker    = dict(colors=_dn_colors,
+                                     line=dict(color="#0e1117", width=2)),
+                    textinfo  = "label+percent",
+                    textfont  = dict(size=10),
+                    hovertemplate="%{label}: NT$%{value:,.0f} (%{percent})<extra></extra>",
+                    domain    = dict(x=[0.05, 0.95], y=[0.05, 0.95]),
+                ))
+                # 偏移 >10%：外圈紅色警戒環
+                if _alert:
+                    fig_dn.add_trace(go.Pie(
+                        labels   = ["⚠️ 配置偏離"],
+                        values   = [1],
+                        hole     = 0.88,
+                        marker   = dict(colors=["rgba(244,67,54,0.25)"],
+                                        line=dict(color="#f44336", width=3)),
+                        textinfo = "none",
+                        hoverinfo= "none",
+                        showlegend= False,
+                        domain   = dict(x=[0, 1], y=[0, 1]),
+                    ))
+            # 中央標註
+            fig_dn.update_layout(
+                paper_bgcolor = _bg_c,
+                plot_bgcolor  = _bg_c,
+                font_color    = "#e6edf3",
+                height        = 270,
+                margin        = dict(t=20, b=10, l=10, r=10),
+                showlegend    = False,
+                annotations   = [dict(
+                    text      = f"<b>{_core_pct}%</b><br>核心",
+                    x=0.5, y=0.5, font_size=16,
+                    showarrow = False,
+                    font      = dict(color="#64b5f6"))],
+            )
+            st.plotly_chart(fig_dn, use_container_width=True)
+
+        with _dn_info:
+            st.markdown("<div style='height:20px'></div>", unsafe_allow_html=True)
+            _target2 = st.session_state.get("portfolio_core_pct", 75)
+            if _alert:
+                st.error(
+                    f"⚠️ **配置偏離警告**\n\n"
+                    f"現核心 **{_core_pct}%** vs 目標 **{_target2}%**，"
+                    f"偏差 **{_diff:+.1f}%**（>10%）。\n\n"
+                    f"{'核心過重：建議贖回核心基金，轉入衛星資產。' if _diff > 0 else '衛星過重：建議獲利了結衛星，補回核心配置。'}"
+                )
+            else:
+                st.success(
+                    f"✅ **配置健康**\n\n"
+                    f"核心 **{_core_pct}%** / 衛星 **{100-_core_pct:.1f}%**，"
+                    f"偏差 {_diff:+.1f}%（目標 {_target2}%±10%）"
+                )
+            # 各基金市值明細
+            st.markdown("<div style='margin-top:12px;font-size:12px;color:#888'>持倉明細</div>",
+                        unsafe_allow_html=True)
+            for _pfi in _pf_loaded:
+                _pfi_role  = "🛡️" if _pfi.get("is_core") else "⚡"
+                _pfi_pct   = round(_pfi.get("invest_twd",0) / _tot * 100, 1) if _tot else 0
+                _pfi_c     = "#64b5f6" if _pfi.get("is_core") else "#ff9800"
+                st.markdown(
+                    f"<div style='display:flex;justify-content:space-between;"
+                    f"font-size:11px;padding:3px 0;border-bottom:1px solid #1e2a3a'>"
+                    f"<span style='color:{_pfi_c}'>{_pfi_role} {_pfi.get('code','?')}</span>"
+                    f"<span style='color:#ccc'>{_pfi_pct}%</span></div>",
+                    unsafe_allow_html=True)
+
     st.markdown("### ➕ 加入基金")
     c_code, c_inv, c_add = st.columns([3,2,1])
     with c_code:
