@@ -551,6 +551,34 @@ with tab1:
                     _res_txt = "❄️ **衰退期**：現金為王，股 20% / 債 50% / 現金 30%。嚴格檢視吃本金風險。"
                 st.info(_res_txt)
 
+                # ── 複合風險溫度計（V4 精準策略引擎）────────────────────
+                from precision_engine import PrecisionStrategyEngine as _PSE, risk_score_gauge_html as _rs_html
+                _pse = _PSE()
+                _df_macro = _pse.build_macro_df(ind)
+                _risk_score = _pse.calculate_composite_risk(_df_macro)
+                _risk_strat = _pse.risk_score_strategy(_risk_score)
+                st.markdown(_rs_html(_risk_score, _risk_strat), unsafe_allow_html=True)
+
+                # 三指標最新值 vs 前期 (metric 卡)
+                if not _df_macro.empty and len(_df_macro) >= 2:
+                    _latest = _df_macro.iloc[-1]
+                    _prev   = _df_macro.iloc[-2]
+                    _mc1, _mc2, _mc3 = st.columns(3)
+                    with _mc1:
+                        st.metric("VIX 恐慌指數",
+                                  f"{_latest['VIX']:.1f}",
+                                  f"{_latest['VIX'] - _prev['VIX']:+.1f}")
+                    with _mc2:
+                        st.metric("HY 信用利差 (%)",
+                                  f"{_latest['HY_Spread']:.2f}",
+                                  f"{_latest['HY_Spread'] - _prev['HY_Spread']:+.2f}")
+                    with _mc3:
+                        st.metric("10Y-2Y 利差 (%)",
+                                  f"{_latest['Yield_Curve_10Y_2Y']:.3f}",
+                                  f"{_latest['Yield_Curve_10Y_2Y'] - _prev['Yield_Curve_10Y_2Y']:+.3f}")
+                elif _df_macro.empty:
+                    st.caption("⚠️ 三指標歷史序列對齊失敗，無法計算 Z-Score（API 資料不足 20 筆）")
+
         # ── 指標貢獻明細（折疊）──
         with st.expander("📊 各指標貢獻明細", expanded=False):
             _rows = []
@@ -1011,6 +1039,61 @@ with tab2:
                                         f"<span style='color:#888;font-size:10px'>{_ts}</span>"
                                         f"<span style='color:#58a6ff;font-weight:700;font-size:11px;width:36px;text-align:right'>{_tp:.1f}%</span>"
                                         f"</div>", unsafe_allow_html=True)
+
+                # ── V4: 微觀防護盾 — 前十大持倉三率檢核 ────────────────
+                _shield_tops = (_holdings.get("top_holdings") or []) if _holdings else []
+                if _shield_tops:
+                    with st.expander("🛡️ 微觀防護盾 — 持倉三率穿透檢核（V4）", expanded=False):
+                        st.caption(
+                            "掃描前十大持倉個股毛利率 / 營業利益率 / 淨利率 QoQ 變化，"
+                            "識別「估值虛漲（PE拉高）vs 實質獲利」的 K 型分化陷阱。"
+                        )
+                        _shield_key = f"shield_{fk}"
+                        if st.button("🔍 執行三率穿透掃描", key=f"btn_shield_{fk}"):
+                            from precision_engine import (
+                                PrecisionStrategyEngine as _PSE2,
+                                three_ratio_row_html as _tr_html,
+                            )
+                            _pse2 = _PSE2()
+                            _shield_results = []
+                            with st.spinner(f"正在掃描 {len(_shield_tops)} 檔持倉財報…"):
+                                for _sh_top in _shield_tops[:10]:
+                                    _sh_name = _sh_top.get("name", "")
+                                    _sh_data = _pse2.fetch_stock_three_ratios(_sh_name)
+                                    if _sh_data:
+                                        _shield_results.append(_sh_data)
+                            st.session_state[_shield_key] = _shield_results
+
+                        _cached_shield = st.session_state.get(_shield_key)
+                        if _cached_shield is not None:
+                            from precision_engine import (
+                                PrecisionStrategyEngine as _PSE2,
+                                three_ratio_row_html as _tr_html,
+                            )
+                            _pse2 = _PSE2()
+                            if _cached_shield:
+                                # 彙總判斷
+                                _overall_verdict = _pse2.evaluate_fund_three_ratios(_cached_shield)
+                                _ov_color = ("#00c853" if "🟢" in _overall_verdict
+                                             else "#f44336" if "🔴" in _overall_verdict
+                                             else "#ff9800")
+                                st.markdown(
+                                    f"<div style='background:#0d1117;border:2px solid {_ov_color};"
+                                    f"border-radius:10px;padding:10px 16px;margin:8px 0;"
+                                    f"font-size:13px;font-weight:700;color:{_ov_color}'>"
+                                    f"{_overall_verdict}</div>",
+                                    unsafe_allow_html=True)
+                                # 逐持倉明細
+                                _shield_html = "".join(_tr_html(r) for r in _cached_shield)
+                                st.markdown(_shield_html, unsafe_allow_html=True)
+                                # 未能解析的持倉列表
+                                _resolved_names = {r["stock"] for r in _cached_shield}
+                                _failed = [t.get("name","") for t in _shield_tops[:10]
+                                           if t.get("name","") not in _resolved_names]
+                                if _failed:
+                                    st.caption(f"以下持倉 Ticker 無法解析（外幣基金或罕見代碼）：{', '.join(_failed)}")
+                            else:
+                                st.warning("所有持倉均無法解析 Ticker 或 yfinance 暫無財報，請稍後再試。")
 
                 # AI 基金分析
                 st.divider()
