@@ -837,6 +837,28 @@ with tab2:
                         + f"<div style='color:#666;font-size:10px;margin-top:6px'>現值 {_m_nav_v:.4f}</div>"
                         + "</div>", unsafe_allow_html=True)
 
+                # ── V3-3: -2σ 超跌機會卡（布林下軌突破警報）────────────
+                _boll_latest_low = float(_bb_dn.iloc[-1]) if len(_bb_dn) > 0 else None
+                if _boll_latest_low is not None and _m_nav_v > 0 and _m_nav_v <= _boll_latest_low:
+                    st.markdown(
+                        f"<div style='background:linear-gradient(135deg,#061a06,#0d2a0d);"
+                        f"border:2px solid #00e676;border-radius:12px;padding:14px 18px;margin:10px 0'>"
+                        f"<div style='color:#00e676;font-size:14px;font-weight:700;margin-bottom:8px'>"
+                        f"⚡ -2σ 超跌機會卡 — 布林下軌突破！</div>"
+                        f"<div style='display:flex;gap:24px;flex-wrap:wrap;margin-bottom:8px'>"
+                        f"<div><div style='color:#888;font-size:10px'>現值 NAV</div>"
+                        f"<div style='color:#fff;font-weight:700;font-size:16px'>{_m_nav_v:.4f}</div></div>"
+                        f"<div><div style='color:#888;font-size:10px'>布林下軌(-2σ)</div>"
+                        f"<div style='color:#00e676;font-weight:700;font-size:16px'>{_boll_latest_low:.4f}</div></div>"
+                        f"<div><div style='color:#888;font-size:10px'>跌破幅度</div>"
+                        f"<div style='color:#69f0ae;font-weight:700;font-size:16px'>"
+                        f"{(_boll_latest_low - _m_nav_v) / _boll_latest_low * 100:.2f}%</div></div>"
+                        f"</div>"
+                        f"<div style='color:#aaa;font-size:11px;border-top:1px solid #1a3a1a;padding-top:8px'>"
+                        f"孫慶龍老師：布林下軌突破 = 短期非理性超跌，適合左側交易分批承接。"
+                        f"建議：小量試單（部位 ≤20%），並設停損於下軌下方 3%。</div>"
+                        f"</div>", unsafe_allow_html=True)
+
                 # 關鍵指標 + 配息
                 col_a, col_b = st.columns(2)
                 with col_a:
@@ -847,6 +869,22 @@ with tab2:
                     _al1  = _r1y.get("Alpha","—");  _be1 = _r1y.get("Beta","—")
                     for lbl, val in [("波動 σ(1Y)", f"{_std1}%"),("Sharpe(1Y)",str(_sh1)),("Alpha(1Y)",str(_al1)),("Beta(1Y)",str(_be1))]:
                         st.markdown(f"<div style='display:flex;justify-content:space-between;padding:5px 10px;background:#161b22;border-radius:6px;margin:3px 0'><span style='color:#888;font-size:12px'>{lbl}</span><span style='font-weight:700'>{val}</span></div>", unsafe_allow_html=True)
+                    # Sharpe 持久性說明（孫慶龍老師框架）
+                    try:
+                        _sh1_v = float(_sh1)
+                        if _sh1_v > 0.5:
+                            _sh_txt, _sh_c = "優秀（>0.5）持久創造超額報酬", "#00c853"
+                        elif _sh1_v >= 0:
+                            _sh_txt, _sh_c = "普通（0~0.5）勉強補償風險", "#ff9800"
+                        else:
+                            _sh_txt, _sh_c = "差勁（<0）不如持有現金", "#f44336"
+                        st.markdown(
+                            f"<div style='font-size:10px;color:{_sh_c};padding:3px 10px;"
+                            f"background:#0d1117;border-radius:4px;margin:2px 0 6px 0'>"
+                            f"孫慶龍框架：{_sh_txt}</div>",
+                            unsafe_allow_html=True)
+                    except (ValueError, TypeError):
+                        pass
                     # 四分位
                     peer = mj_raw.get("risk_metrics",{}).get("peer_compare",{})
                     qr = _quartile_check(peer, risk_tbl)
@@ -893,6 +931,50 @@ with tab2:
                                 + "</div>", unsafe_allow_html=True)
                     else:
                         st.info("無配息記錄")
+
+                # ── V3-3: TER 費用率卡（對比同類均值）────────────────────
+                _ter_raw = mj_raw.get("mgmt_fee","") or ""
+                _ter_cat = mj_raw.get("category","") or ""
+                if _ter_raw:
+                    try:
+                        _ter_val = float(str(_ter_raw).replace("%","").strip())
+                    except (ValueError, TypeError):
+                        _ter_val = None
+                    if _ter_val is not None:
+                        # 類別均值對照表（台灣基金市場常見估值）
+                        _ter_avg_map = {
+                            "股票": 1.50, "全球股票": 1.50, "科技": 1.60,
+                            "亞太": 1.60, "新興市場": 1.70, "高收益": 1.00,
+                            "債券": 0.80, "全球債券": 0.80, "投資等級": 0.80,
+                            "平衡": 1.20, "貨幣": 0.30,
+                        }
+                        _ter_avg = next(
+                            (_v for _k, _v in _ter_avg_map.items() if _k in _ter_cat), None)
+                        if _ter_avg is not None:
+                            _ter_diff = _ter_val - _ter_avg
+                            _ter_c = "#f44336" if _ter_diff > 0.3 else ("#ff9800" if _ter_diff > 0 else "#00c853")
+                            _ter_vs = f"高於均值 +{_ter_diff:.2f}%" if _ter_diff > 0 else f"低於均值 {abs(_ter_diff):.2f}%"
+                            _ter_avg_html = (
+                                f"<div><div style='color:#888;font-size:10px'>同類均值</div>"
+                                f"<div style='color:#888;font-weight:700;font-size:16px'>{_ter_avg:.2f}%</div></div>"
+                                f"<div><div style='color:#888;font-size:10px'>費用比較</div>"
+                                f"<div style='color:{_ter_c};font-weight:700;font-size:16px'>{_ter_vs}</div></div>"
+                            )
+                        else:
+                            _ter_c, _ter_avg_html = "#888", ""
+                        st.markdown(
+                            f"<div style='background:#161b22;border:1px solid #30363d;"
+                            f"border-radius:10px;padding:10px 16px;margin:8px 0'>"
+                            f"<div style='color:#888;font-size:11px;margin-bottom:6px'>💰 TER 費用率分析"
+                            + (f" — {_ter_cat[:12]}" if _ter_cat else "") + "</div>"
+                            f"<div style='display:flex;gap:24px;flex-wrap:wrap;margin-bottom:6px'>"
+                            f"<div><div style='color:#888;font-size:10px'>最高經理費</div>"
+                            f"<div style='color:{_ter_c};font-weight:700;font-size:16px'>{_ter_val:.2f}%</div></div>"
+                            + _ter_avg_html +
+                            f"</div>"
+                            f"<div style='color:#555;font-size:10px'>"
+                            f"費用率愈低，長期複利效益愈佳（費用每降 1%，20 年後終值多 ~25%）</div>"
+                            f"</div>", unsafe_allow_html=True)
 
                 # ── 持股分析（折疊）──
                 _holdings = mj_raw.get("holdings", {}) or {}
