@@ -383,6 +383,67 @@ with tab1:
                 f"<div style='flex:1;text-align:right;color:#ccc;font-size:11px'>{_adv}</div></div>"
                 f"{_trig_html}</div>", unsafe_allow_html=True)
 
+        # ── 美林時鐘老師語音卡片（V3-2 Core Protocol v3.0）────────────
+        _ml_phase_data = {
+            "衰退": {
+                "icon": "❄️", "color": "#64b5f6",
+                "fund_type": "長天期美債基金、高評級投資等級債",
+                "teacher": "陳重銘老師提醒：衰退期現金為王，優先配置高評級債券基金。新手最常在此時恐慌贖回，老手反而逢低累積單位數，等景氣復甦自然回漲。",
+                "action": "核心佔比 ≥80%，衛星暫停加碼，開啟定期定額迎接復甦",
+            },
+            "復甦": {
+                "icon": "🌱", "color": "#69f0ae",
+                "fund_type": "市值型 ETF、中小型股基金、成長型股票基金",
+                "teacher": "孫慶龍老師分析：復甦期是佈局成長型基金的黃金視窗。PMI 底部翻揚、殖利率倒掛收斂，是最佳進場訊號。避免死守純防禦型基金，錯過早期漲幅。",
+                "action": "積極佈局：股票型基金提升至 60%，衛星佈局中小型或科技主題",
+            },
+            "擴張": {
+                "icon": "🌤️", "color": "#ffcc02",
+                "fund_type": "均衡配置；科技/主題衛星佈局持續追蹤趨勢",
+                "teacher": "陳重銘老師心法：擴張期繼續持有，讓時間複利發揮。定期定額勿停扣，配息收入持續再投入衛星資產，以息養股最佳時機。",
+                "action": "持有核心配息資產，衛星設停利 +15%，注意 VIX 是否異常低",
+            },
+            "高峰": {
+                "icon": "🔥", "color": "#f44336",
+                "fund_type": "核心配息基金（降低衛星部位，落袋為安）",
+                "teacher": "孫慶龍老師警示：高峰期居高思危！PMI 高檔鈍化、VIX 極低往往是反轉前兆。老手此時將衛星獲利轉回核心穩健配息基金，不追高。",
+                "action": "衛星部位停利出場，核心佔比回升至 ≥75%，現金水位預備",
+            },
+        }
+        _ml_d = _ml_phase_data.get(ph, {
+            "icon": "⛅", "color": "#888",
+            "fund_type": "均衡配置",
+            "teacher": "景氣位階轉換中，維持核心/衛星均衡配置。",
+            "action": "持續定期定額，等待景氣訊號明確後再調整",
+        })
+        # VIX 超跌機會訊號
+        _ml_vix_alert = ""
+        if _vix_v is not None and _vix_v > 30:
+            _ml_vix_alert = (
+                f"<div style='border-left:3px solid #69f0ae;background:#0a1a0a;"
+                f"padding:8px 12px;margin-top:8px;border-radius:0 6px 6px 0;font-size:12px'>"
+                f"⚡ <b style='color:#69f0ae'>VIX={_vix_v:.1f} 超過 30（市場恐慌）</b>"
+                f"——陳重銘老師「左側交易」訊號，核心資產分批加碼時機！</div>"
+            )
+        st.markdown(
+            f"<div style='background:linear-gradient(135deg,#0d1117,#0d1a0d);"
+            f"border:2px solid {_ml_d['color']};border-radius:12px;"
+            f"padding:16px 20px;margin:12px 0'>"
+            f"<div style='display:flex;align-items:center;gap:10px;margin-bottom:10px'>"
+            f"<span style='font-size:28px'>{_ml_d['icon']}</span>"
+            f"<div>"
+            f"<div style='color:#888;font-size:11px;letter-spacing:1px'>📐 美林時鐘 · 老師語音</div>"
+            f"<div style='color:{_ml_d['color']};font-weight:800;font-size:16px'>"
+            f"{ph} 期 → 適合：{_ml_d['fund_type']}</div>"
+            f"</div></div>"
+            f"<div style='color:#ccc;font-size:13px;line-height:1.7;border-left:3px solid {_ml_d['color']};"
+            f"padding-left:12px'>{_ml_d['teacher']}</div>"
+            f"<div style='margin-top:10px;background:#1a1f2e;border-radius:6px;padding:8px 12px;"
+            f"font-size:12px;color:#e6edf3'>🎯 <b>本階段行動建議</b>：{_ml_d['action']}</div>"
+            f"{_ml_vix_alert}"
+            f"</div>",
+            unsafe_allow_html=True)
+
         # ── 宏觀風險溫度計（Core Protocol v2.0 Ch.3 多軸複合圖）──────
         _pmi_s   = (ind.get("PMI")         or {}).get("series")
         _spr_s   = (ind.get("YIELD_10Y2Y") or {}).get("series")

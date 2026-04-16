@@ -281,33 +281,112 @@ def analyze_fund_pro(api_key, fund_name, portal, full_key, metrics, dividends,
 
 def analyze_fund_json(api_key, fund_name, metrics, perf_data, phase_info,
                       risk_metrics=None, holdings=None, currency="USD"):
-    """精簡 JSON 摘要（<300 tokens 輸入）"""
-    m  = metrics  or {}
+    """
+    基金教練 AI 分析 v3.0
+    四節結構：景氣×基金類別 / 體質診斷 / 量化買賣點 / 操作待辦
+    回傳 Markdown 字串（直接供 st.markdown 顯示）
+    """
+    m  = metrics   or {}
     pf = perf_data or {}
     pi = phase_info or {}
-    rt = ((risk_metrics or {}).get("risk_table") or {})
-    adr   = m.get("annual_div_rate", 0) or 0
-    tr1y  = pf.get("1Y")
+
+    # risk_metrics 可能被誤傳為 dividends list，安全取 risk_table
+    _rm = risk_metrics if isinstance(risk_metrics, dict) else {}
+    rt  = (_rm.get("risk_table") or {})
+    yr1 = rt.get("一年", {}) or {}
+
+    # ── 基礎指標 ──────────────────────────────────────────────
+    adr    = m.get("annual_div_rate", 0) or 0
+    tr1y   = pf.get("1Y")
     eating = (tr1y is not None) and (tr1y < adr) and (adr > 0)
-    std   = (rt.get("一年") or {}).get("標準差") or m.get("std_1y","N/A")
-    sharpe= (rt.get("一年") or {}).get("Sharpe") or m.get("sharpe","N/A")
-    prompt = (
-        f"基金:{fund_name}|景氣:{pi.get('phase','?')}({pi.get('score',5)}/10)|"
-        f"配息:{adr:.1f}%|TR1Y:{tr1y or 'N/A'}%|{'吃本金🔴' if eating else '健康✅'}|"
-        f"σ:{std}%|Sharpe:{sharpe}\n"
-        "嚴格只輸出JSON，無其他文字：\n"
-        "{\"summary\":\"30字\",\"strengths\":[\"優1\"],\"risks\":[\"險1\"],\"action\":\"操作\",\"score\":0}"
-    )
-    raw = _gemini(api_key, prompt, 300, force_json=True)
+    std    = yr1.get("標準差") or m.get("std_1y", "N/A")
+    sharpe = yr1.get("Sharpe") or m.get("sharpe", "N/A")
+    nav    = m.get("nav", "N/A")
+    pos    = m.get("pos_label", "N/A")
+    buy1   = m.get("buy1", "N/A")
+    buy2   = m.get("buy2", "N/A")
+    sell1  = m.get("sell1", "N/A")
+    maxdd  = m.get("max_drawdown", "N/A")
+    mgmt_fee = m.get("mgmt_fee") or m.get("total_expense_ratio") or "N/A"
+    category = m.get("category") or m.get("fund_type") or "未知"
+    phase  = pi.get("phase", "未知")
+    score  = pi.get("score", "?")
+    alloc  = pi.get("allocation", {})
+    alloc_s = " / ".join(f"{k}{v}%" for k, v in alloc.items()) if alloc else "未知"
+
+    # ── -2σ 超跌機會判斷 ──────────────────────────────────────
+    sigma_alert = ""
     try:
-        c = _re.sub(r"```json\s*|```","", raw).strip()
-        m_j = _re.search(r"\{[\s\S]+\}", c)
-        if m_j:
-            return json.loads(m_j.group())
-    except Exception:
+        if float(nav) <= float(buy2):
+            sigma_alert = (
+                f"⚡ **超跌機會訊號**：NAV({nav}) 已觸及 -2σ 買點({buy2})，"
+                "為陳重銘老師「左側交易」加碼區！"
+            )
+    except (ValueError, TypeError):
         pass
-    return {"summary": str(raw)[:80], "strengths":[], "risks":["⚠️ 請重試"],
-            "action":"重新分析", "score":50}
+
+    # ── 景氣位階 → 基金類別對應表 ──────────────────────────────
+    _phase_map = {
+        "衰退": "長天期美債基金、高評級投資等級債（Beta 最低、抗跌首選）",
+        "復甦": "市值型 ETF、中小型股基金、成長型股票基金（早鳥佈局）",
+        "擴張": "均衡配置；衛星可佈局科技/主題基金（趨勢追蹤）",
+        "高峰": "核心配息基金優先；壓縮衛星部位落袋為安（居高思危）",
+    }
+    phase_rec = _phase_map.get(phase, "均衡配置（景氣位階待確認）")
+
+    # ── Sharpe 評語 ───────────────────────────────────────────
+    try:
+        _sh = float(sharpe)
+        sharpe_comment = "優秀（>0.5，孫慶龍老師：經理人長期控風能力佳）" if _sh > 0.5 else \
+                         "普通（0~0.5，尚可持有，密切觀察）" if _sh >= 0 else \
+                         "差勁（<0，承擔風險未獲報酬，考慮替換標的）"
+    except (ValueError, TypeError):
+        sharpe_comment = "資料不足，無法評估"
+
+    prompt = f"""你是整合「陳重銘以息養股」與「孫慶龍基金績效評估」方法論的台灣基金教練。
+⚠️ 嚴格規則：只能根據以下快照分析，禁止引用外部資訊，禁止杜撰數字。
+
+【基金快照】
+基金名稱：{fund_name}  類別：{category}  計價幣：{currency}
+目前 NAV：{nav}  位階：{pos}  {sigma_alert or '（NAV 在正常區間）'}
+買1（年低+σ）：{buy1}  買2（年低）：{buy2}  停利（年高-σ）：{sell1}
+配息年化率：{adr:.1f}%  含息 TR1Y：{tr1y if tr1y is not None else 'N/A'}%  {'🔴吃本金警報' if eating else '✅ 含息報酬健康'}
+標準差(1Y)：{std}%  Sharpe(1Y)：{sharpe}（{sharpe_comment}）
+最大回撤：{maxdd}%  管理費/內扣費：{mgmt_fee}
+績效：1M={pf.get('1M','N/A')}%  3M={pf.get('3M','N/A')}%  1Y={pf.get('1Y','N/A')}%  3Y={pf.get('3Y','N/A')}%  5Y={pf.get('5Y','N/A')}%
+
+【總經位階】{phase}（{score}/10）建議配置：{alloc_s}
+此階段適合基金類型：{phase_rec}
+
+═══════════════════════════════════════════
+請用繁體中文完整輸出以下【四節】，每節用 ### 開頭標題：
+
+### 🌡️ 一、景氣位階 × 基金類別建議
+- 當前「{phase}」位階，最有利的基金類型為何？給出明確類別名稱
+- 這檔「{category}」基金在此位階的合理性：適合 / 偏多 / 偏保守？
+- 教練建議：維持持有 / 轉換類別 / 增加哪類補充標的（一句話結論）
+
+### 🩺 二、基金體質診斷
+{'- 🔴 **吃本金警報**：配息率（' + f'{adr:.1f}' + '%）高於含息 TR1Y（' + str(tr1y or 0) + '%）。陳重銘老師：高配息不等於高報酬，本金失血要當心！' if eating else '- ✅ 配息安全：含息報酬高於配息率，資產未失血'}
+- Sharpe 持久性評語：{sharpe}（{sharpe_comment}）
+- 最大回撤 {maxdd}% 說明經理人抗跌能力評估
+- 費用率 {mgmt_fee}：與同類型基金相比是否具競爭力？（0.5%以下低成本）
+
+### 📍 三、量化買賣點分析
+{sigma_alert if sigma_alert else '- 目前 NAV 處於正常區間，非極端買賣點'}
+- 第一買點 {buy1}（年低+σ）：距離當前 NAV 尚有空間嗎？
+- 第二買點 {buy2}（年低，歷史超跌區）：觸及時建議單筆大買
+- 停利點 {sell1}（年高-σ）：是否接近，需要準備減碼？
+- 陳重銘老師策略：依位置給出「定期定額持續」或「單筆等回調」具體建議
+
+### 🔄 四、本週操作待辦清單
+請輸出 3-5 個 Markdown Checkbox：
+- [ ] 具體行動（含觸發條件或目標數字）
+- [ ] 最後一項必須是「本週核心原則」一句話
+═══════════════════════════════════════════
+【必須完整輸出四節，每節至少 2 個要點，第四節必須含 Checkbox 格式】"""
+
+    return _gemini(api_key, prompt, max_tokens=1800)
 
 def analyze_portfolio_correlation(api_key, funds_list, phase_info, data_text=""):
     try:
