@@ -387,6 +387,35 @@ def fetch_all_indicators(fred_api_key):
             score=0.5 if v>p else -0.5,
             weight=0.5, series=s)
 
+    # ── 薩姆規則（Sahm Rule Recession Indicator）──────────────────────
+    df = _fred("SAHMREALTIME", fred_api_key, 60)
+    if len(df) >= 2:
+        s = df.set_index("date")["value"].tail(36)
+        v = float(df.iloc[-1]["value"]); p = float(df.iloc[-2]["value"])
+        R["SAHM"] = dict(name="薩姆規則", value=v, prev=p, unit="pp", type="領先",
+            date=str(df.iloc[-1]["date"])[:7],
+            desc="≥0.5 觸發衰退警報 | <0.3 安全 | 3月失業率均值-12月最低",
+            trend=_trend(df["value"].tolist()[-6:]),
+            signal="🔴" if v >= 0.5 else ("🟡" if v >= 0.3 else "🟢"),
+            color="#f44336" if v >= 0.5 else ("#ff9800" if v >= 0.3 else "#00c853"),
+            score=-2 if v >= 0.5 else (-0.5 if v >= 0.3 else 1),
+            weight=1.5, series=s)
+
+    # ── SLOOS 銀行放貸標準（Senior Loan Officer Survey）──────────────
+    df = _fred("DRTSCILM", fred_api_key, 40)
+    if len(df) >= 2:
+        s = df.set_index("date")["value"].tail(24)
+        v = float(df.iloc[-1]["value"]); p = float(df.iloc[-2]["value"])
+        # 正值=銀行收緊放貸(壞)，負值=放寬(好)
+        R["SLOOS"] = dict(name="SLOOS 放貸標準", value=v, prev=p, unit="%", type="領先",
+            date=str(df.iloc[-1]["date"])[:7],
+            desc=">20% 銀行大幅緊縮信貸（衰退前兆）| <0% 信貸寬鬆",
+            trend=_trend(df["value"].tolist()[-4:]),
+            signal="🔴" if v > 20 else ("🟡" if v > 0 else "🟢"),
+            color="#f44336" if v > 20 else ("#ff9800" if v > 0 else "#00c853"),
+            score=-2 if v > 30 else (-1 if v > 20 else (0.5 if v < 0 else -0.5)),
+            weight=1.5, series=s)
+
     return R
 def get_market_phase(indicators: dict) -> dict:
     """
