@@ -207,23 +207,24 @@ def is_valid_moneydj_page(html: str) -> bool:
 
 def classify_fetch_status(fund_data: dict) -> str:
     """
-    v13.5: 依資料完整度分類抓取結果。
-    判斷依據擴大：有 metrics 或 risk_metrics 都算有指標。
-      'complete' → 名稱 + (淨值|序列) + 指標
-      'partial'  → 有名稱 或 有淨值 或 有指標（任一）
+    v13.6: 依資料完整度分類抓取結果。
+    **完整 (complete)** 必須同時具備：名稱 + ≥10筆歷史序列 + calc_metrics 指標。
+    僅有最新淨值/risk_metrics 不夠，標為 partial（讓 UI 顯示明確提示）。
+      'complete' → fund_name + series(≥10) + metrics(非空)
+      'partial'  → 有名稱 或 有淨值 或 有 risk_metrics（任一，但缺 series/metrics）
       'failed'   → 幾乎什麼都沒有
     """
     has_name    = bool(fund_data.get("fund_name"))
-    has_nav     = fund_data.get("nav_latest") is not None
-    s = fund_data.get("series")
+    s           = fund_data.get("series")
     has_series  = s is not None and hasattr(s, "__len__") and len(s) >= 10
-    # 有 metrics 或 risk_metrics 都算有指標
-    has_metrics = (bool(fund_data.get("metrics")) or
+    has_metrics = bool(fund_data.get("metrics"))          # 必須是 calc_metrics 結果
+    has_any     = (has_name or
+                   fund_data.get("nav_latest") is not None or
                    bool(fund_data.get("risk_metrics")))
 
-    if has_name and (has_nav or has_series) and has_metrics:
+    if has_name and has_series and has_metrics:
         return "complete"
-    if has_name or has_nav or has_metrics:
+    if has_any:
         return "partial"
     return "failed"
 

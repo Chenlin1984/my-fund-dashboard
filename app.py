@@ -912,9 +912,12 @@ with tab2:
             if fd_raw.get("error"):
                 st.error(f"❌ {fd_raw['error']}")
             elif _status == "partial":
-                st.warning(f"⚠️ 部分資料（{fd_raw.get('warning','資料不完整')}）")
-            else:
-                st.success(f"✅ {fd_raw.get('fund_name','') or fd_raw.get('full_key','')} 資料已載入")
+                _p_fn = fd_raw.get("fund_name","") or fd_raw.get("full_key","")
+                st.warning(f"🟡 **{_p_fn}** — 部分資料（歷史淨值未取得，詳情見下方）")
+            elif _status == "complete":
+                _c_fn = fd_raw.get("fund_name","") or fd_raw.get("full_key","")
+                _c_n  = len(fd_raw.get("series")) if fd_raw.get("series") is not None else 0
+                st.success(f"✅ **{_c_fn}** ｜ 淨值 {_c_n} 筆 資料已載入")
 
     # ── 關鍵字搜尋（折疊）──
     with st.expander("🔍 關鍵字搜尋境外基金（TDCC / FundClear）", expanded=False):
@@ -951,7 +954,62 @@ with tab2:
             mj_raw = fd.get("moneydj_raw",{}) or {}
 
             if s is None or (hasattr(s,"empty") and s.empty) or not m:
-                st.warning("資料不足，無法顯示完整分析（代碼可能錯誤，或 MoneyDJ 暫時無法連線）")
+                # ── 部分資料視圖（series 缺失時仍顯示可用資訊）────────
+                _p_name  = name or fk
+                _p_nav   = mj_raw.get("nav_latest")
+                _p_risk  = (mj_raw.get("risk_metrics") or {})
+                _p_perf  = (mj_raw.get("perf") or {})
+                _p_err   = fd.get("error") or fd.get("warning") or ""
+                _p_cat   = mj_raw.get("category","")
+                _p_fee   = mj_raw.get("mgmt_fee","")
+
+                st.markdown(
+                    f"<div style='background:#1a1500;border:1px solid #ff9800;"
+                    f"border-radius:10px;padding:14px 18px;margin:8px 0'>"
+                    f"<div style='color:#ff9800;font-weight:700;font-size:13px;margin-bottom:8px'>"
+                    f"🟡 部分資料（歷史淨值序列未取得，下方顯示已有資訊）</div>"
+                    + (f"<div style='color:#ccc;font-size:11px;margin-bottom:6px'>{_p_err}</div>"
+                       if _p_err else "")
+                    + f"<div style='color:#888;font-size:11px;border-top:1px solid #2a1f00;padding-top:8px;margin-top:4px'>"
+                    f"💡 解決方案：直接貼入 MoneyDJ 完整網址<br>"
+                    f"境外基金：<code>www.moneydj.com/funddj/ya/yp010001.djhtm?a={fk}</code></div>"
+                    f"</div>",
+                    unsafe_allow_html=True)
+
+                # 顯示已取得的基本資料
+                _pc1, _pc2, _pc3 = st.columns(3)
+                with _pc1:
+                    if _p_nav is not None:
+                        st.metric("最新淨值", f"{float(_p_nav):.4f}")
+                    else:
+                        st.metric("最新淨值", "N/A")
+                with _pc2:
+                    st.metric("基金類別", _p_cat[:12] or "N/A")
+                with _pc3:
+                    st.metric("最高經理費", _p_fee or "N/A")
+
+                # 若有風險指標，仍顯示
+                if _p_risk.get("risk_table"):
+                    st.markdown("#### 📊 風險指標（已取得）")
+                    _rt = _p_risk["risk_table"]
+                    _r1y = _rt.get("一年", {})
+                    for lbl, val in [("標準差",_r1y.get("標準差","—")),
+                                     ("Sharpe", _r1y.get("Sharpe","—")),
+                                     ("Alpha",  _r1y.get("Alpha","—")),
+                                     ("Beta",   _r1y.get("Beta","—"))]:
+                        st.markdown(
+                            f"<div style='display:flex;justify-content:space-between;padding:5px 10px;"
+                            f"background:#161b22;border-radius:6px;margin:3px 0'>"
+                            f"<span style='color:#888;font-size:12px'>{lbl}(1Y)</span>"
+                            f"<span style='font-weight:700'>{val}</span></div>",
+                            unsafe_allow_html=True)
+
+                # 若有績效數據，顯示
+                if _p_perf:
+                    st.markdown("#### 📈 績效數據（已取得）")
+                    _perf_cols = st.columns(len(_p_perf))
+                    for _pi, (_pk, _pv) in enumerate(list(_p_perf.items())[:4]):
+                        _perf_cols[_pi].metric(f"報酬率({_pk})", f"{_pv:.2f}%" if isinstance(_pv,(int,float)) else str(_pv))
             else:
                 st.success(f"✅ **{name or fk}** ｜ 淨值 {len(s)} 筆 ‧ 配息 {len(divs)} 筆")
 
