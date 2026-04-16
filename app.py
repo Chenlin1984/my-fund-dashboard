@@ -884,30 +884,56 @@ with tab2:
     st.markdown("## 🔍 單一基金深度分析")
     st.caption("輸入 MoneyDJ 代碼或網址，即時抓取淨值 / 持股 / 配息 / 風險指標")
 
-    col_url, col_go = st.columns([5,1])
-    with col_url:
+    # ── 境內 / 境外 明確切換 ──────────────────────────────────────
+    _t2_type_col, _t2_input_col, _t2_btn_col = st.columns([1.4, 4.2, 1])
+    with _t2_type_col:
+        fund_type_sel = st.radio(
+            "基金類型",
+            ["🏠 境內", "🌐 境外"],
+            horizontal=True,
+            key="fund_type_radio",
+            label_visibility="collapsed",
+        )
+        _t2_page_type = "yp010000" if "境內" in fund_type_sel else "yp010001"
+        st.caption("境內 yp010000 ／ 境外 yp010001")
+    with _t2_input_col:
         mj_url_input = st.text_input("MoneyDJ URL 或代碼",
-            placeholder="貼上 MoneyDJ 網址 或 輸入代碼（tlzf9 / LU0095940420）",
+            placeholder="輸入代碼（TLZF9 / ACTI94）或貼上完整 MoneyDJ 網址",
             label_visibility="collapsed", key="mj_url_input")
-    with col_go:
+    with _t2_btn_col:
         do_load = st.button("🚀 分析", type="primary", use_container_width=True, key="btn_mj_load")
 
+    def _build_moneydj_url(raw_input: str, page_type: str) -> str:
+        """
+        若使用者輸入純代碼（非 http URL），直接拼出正確的 MoneyDJ 完整網址。
+        境內 → yp010000.djhtm?a={code}
+        境外 → yp010001.djhtm?a={code}
+        """
+        _raw = raw_input.strip()
+        if _raw.startswith("http"):
+            return _raw  # 使用者貼了完整 URL，直接使用
+        # 純代碼：強制建立對應 page_type 的 URL
+        _code = _raw.upper()
+        return f"https://www.moneydj.com/funddj/ya/{page_type}.djhtm?a={_code}"
+
     if do_load and mj_url_input.strip():
-        with st.spinner("📡 抓取 MoneyDJ 資料（基本資料 + 持股 + 績效）..."):
-            fd_raw = fetch_fund_from_moneydj_url(mj_url_input.strip())
+        _resolved_url = _build_moneydj_url(mj_url_input.strip(), _t2_page_type)
+        with st.spinner(f"📡 抓取 {'境內' if _t2_page_type=='yp010000' else '境外'}基金資料..."):
+            fd_raw = fetch_fund_from_moneydj_url(_resolved_url)
             fd_raw = normalize_result_state(fd_raw)
             _status = fd_raw.get("status", classify_fetch_status(fd_raw))
             st.session_state.fund_data = {
-                "full_key":  fd_raw.get("full_key",""),
-                "fund_name": fd_raw.get("fund_name",""),
-                "portal":    "www",
-                "series":    fd_raw.get("series"),
-                "dividends": fd_raw.get("dividends",[]),
-                "metrics":   fd_raw.get("metrics",{}),
-                "error":     fd_raw.get("error"),
-                "warning":   fd_raw.get("warning"),
-                "status":    _status,
+                "full_key":    fd_raw.get("full_key",""),
+                "fund_name":   fd_raw.get("fund_name",""),
+                "portal":      "www",
+                "series":      fd_raw.get("series"),
+                "dividends":   fd_raw.get("dividends",[]),
+                "metrics":     fd_raw.get("metrics",{}),
+                "error":       fd_raw.get("error"),
+                "warning":     fd_raw.get("warning"),
+                "status":      _status,
                 "moneydj_raw": fd_raw,
+                "page_type":   _t2_page_type,
             }
             if fd_raw.get("error"):
                 st.error(f"❌ {fd_raw['error']}")
@@ -970,10 +996,11 @@ with tab2:
                     f"🟡 部分資料（歷史淨值序列未取得，下方顯示已有資訊）</div>"
                     + (f"<div style='color:#ccc;font-size:11px;margin-bottom:6px'>{_p_err}</div>"
                        if _p_err else "")
-                    + f"<div style='color:#888;font-size:11px;border-top:1px solid #2a1f00;padding-top:8px;margin-top:4px'>"
-                    f"💡 解決方案：直接貼入 MoneyDJ 完整網址<br>"
-                    f"境外基金：<code>www.moneydj.com/funddj/ya/yp010001.djhtm?a={fk}</code></div>"
-                    f"</div>",
+                    + (f"<div style='color:#888;font-size:11px;border-top:1px solid #2a1f00;padding-top:8px;margin-top:4px'>"
+                    f"💡 解決方案：確認上方已選擇正確的「境內/境外」切換，或直接貼入完整 MoneyDJ 網址<br>"
+                    f"境內：<code>yp010000.djhtm?a={fk}</code>　"
+                    f"境外：<code>yp010001.djhtm?a={fk}</code></div>"
+                    f"</div>"),
                     unsafe_allow_html=True)
 
                 # 顯示已取得的基本資料
