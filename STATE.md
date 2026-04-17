@@ -2,11 +2,38 @@
 > _最後更新：2026-04-16_
 
 ## 📌 當前狀態
-- **環境**: Streamlit Cloud + GitHub（branch: `main`）
-- **進度**: ✅ Core Protocol v3.0 + V4 精準策略引擎 **全部完成**
-- **工作分支**: `main`（所有 PR 已 merge）
-- **app.py**: 2410 行，6 tabs，AST OK
-- **precision_engine.py**: 240 行（新增）
+- **環境**: Streamlit Cloud + GitHub（branch: `main` + `claude/system-detox-upgrade-ra7Tp`）
+- **進度**: ✅ V5 視覺化導航 + Bug Fix + 境內/境外 切換 **全部完成**
+- **工作分支**: `claude/system-detox-upgrade-ra7Tp`（最新開發分支）
+- **app.py**: 2854 行，6 tabs，AST OK
+- **precision_engine.py**: 347 行
+
+---
+
+## ✅ V5 Bug Fix + UX（2026-04-16 完成）
+
+| 步驟 | 內容 | Commit | 狀態 |
+|------|------|--------|------|
+| Fix-1 | `classify_fetch_status()` v13.6 — complete 需 series≥10 + metrics | 3c0035e | ✅ |
+| Fix-2 | Tab2 partial data view — 橘色診斷卡 + 已有資訊三欄顯示 | 3c0035e | ✅ |
+| UX-1 | Tab2 境內/境外 radio button + `_build_moneydj_url()` helper | cdf707f | ✅ |
+
+### UX-1 境內/境外切換設計
+- Radio：`["🏠 境內", "🌐 境外"]` → `_t2_page_type = "yp010000" / "yp010001"`
+- `_build_moneydj_url(raw_input, page_type)`：完整 URL 直通；純代碼按 page_type 組建
+- 消除 TLZF9 等境外基金因 auto-detection 誤用 yp010000 導致 series=None 的問題
+
+---
+
+## ✅ V5 視覺化導航說明書 v3.0（2026-04-16 完成）
+
+| 步驟 | 內容 | Commit | 狀態 |
+|------|------|--------|------|
+| V5-1 | macro_engine.py — SAHM（SAHMREALTIME）+ SLOOS（DRTSCILM）指標 | a761469 | ✅ |
+| V5-2 | Tab1 War Room — Sahm/SLOOS/ADL 三 Gauge 圖 + 組合基金紅綠燈 + AI 每日一句 | a761469 | ✅ |
+| V5-3 | Tab1 景氣循環羅盤 — Sahm+RSP/SPY Shadow+FedRate 多軸圖 | a761469 | ✅ |
+| V5-4 | Tab2 面積圖 + 微觀防護盾 mini bar | a761469 | ✅ |
+| V5-5 | Tab5 Data Guard — API 時戳表 + 資料筆數 bar + 0筆斷裂警示 | a761469 | ✅ |
 
 ---
 
@@ -25,17 +52,13 @@
 - **`fetch_stock_three_ratios(name)`**: yfinance 季度財報，毛利率/營益率/淨利率 QoQ diff
 - **`_resolve_ticker(name)`**: 台股4碼 → 中文名 → 英文名 → 純字母三層解析
 
-### app.py 整合位置
-- **Tab1**（宏觀風險溫度計 expander 末端）：漸層 gauge bar + 策略研判 + 三欄 metric delta
-- **Tab2**（持股分析 expander 之後）：🛡️ 微觀防護盾 expander，按鈕觸發 + session_state 快取
-
 ---
 
 ## ✅ Core Protocol v3.0 AI Fund Coach（2026-04-16 完成）
 
 | 步驟 | 內容 | Commit | 狀態 |
 |------|------|--------|------|
-| V3-1 | `ai_engine.py` — `analyze_fund_json` 改為 Markdown 輸出，四節教練結構 | aa0d55a(rebase) | ✅ |
+| V3-1 | `ai_engine.py` — `analyze_fund_json` 改為 Markdown 輸出，四節教練結構 | aa0d55a | ✅ |
 | V3-2 | Tab1 美林時鐘老師語音卡片（4象限 + VIX>30 超跌警示） | aa0d55a | ✅ |
 | V3-3 | Tab2 -2σ超跌機會卡 + Sharpe持久性 + TER費用率卡 | 26010c3 | ✅ |
 
@@ -59,10 +82,10 @@
 
 | 檔案 | 說明 | 行數 |
 |------|------|------|
-| `app.py` | 主程式（6 tabs：總經/單一基金/組合基金/回測/資料診斷/說明書） | 2410 |
-| `precision_engine.py` | V4 精準策略引擎（複合風險溫度計 + 微觀防護盾） | 240 |
-| `macro_engine.py` | 總經引擎（零快取版） | — |
-| `fund_fetcher.py` | 基金抓取（零快取、零 ETF） | — |
+| `app.py` | 主程式（6 tabs：總經/單一基金/組合基金/回測/資料診斷/說明書） | 2854 |
+| `precision_engine.py` | V4 精準策略引擎（複合風險溫度計 + 微觀防護盾） | 347 |
+| `macro_engine.py` | 總經引擎（零快取版）+ SAHM + SLOOS | — |
+| `fund_fetcher.py` | 基金抓取（零快取、零 ETF）+ classify_fetch_status v13.6 | — |
 | `ai_engine.py` | Gemini AI 分析（v3.0 Markdown 輸出） | — |
 | `portfolio_engine.py` | 組合評分引擎 | — |
 | `backtest_engine.py` | 回測引擎 | — |
@@ -77,8 +100,9 @@
 ## 📋 Commit 歷史（關鍵）
 | Commit | 內容 |
 |--------|------|
-| eda4128 | V4 精準策略引擎 |
-| 26010c3 | V3-3 Tab2 三項升級 |
-| aa0d55a | V3-2 美林時鐘卡片 |
-| 8401035 | Bug fix：proxy test URL + ACTI94/ACCP138/ACDD19 URL |
-| 0f51847 | NAV cache auto-update |
+| cdf707f | UX: Tab2 境內/境外 radio + _build_moneydj_url() |
+| 3c0035e | Fix: classify_fetch_status v13.6 + partial data view |
+| a761469 | V5: 視覺化導航 v3.0 全域導航塔 + Data Guard |
+| eda4128 | V4: 精準策略引擎 |
+| 26010c3 | V3-3: Tab2 三項升級 |
+| aa0d55a | V3-2: 美林時鐘卡片 |

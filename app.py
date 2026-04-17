@@ -233,6 +233,7 @@ with tab1:
         if st.button(_btn_label, type="primary", key="btn_macro_load"):
             with st.spinner("📡 從 FRED / Yahoo Finance 抓取最新指標..."):
                 _t0_macro = _time_mod.time()
+                fetch_all_indicators.clear()   # 強制刷新 24h 快取
                 ind   = fetch_all_indicators(FRED_KEY)
                 _macro_ms = round((_time_mod.time() - _t0_macro) * 1000)
                 phase = calc_macro_phase(ind)
@@ -275,6 +276,20 @@ with tab1:
                     st.session_state.news_items = []
                     st.session_state.systemic_risk_data = None
                     st.warning(f"⚠️ 新聞抓取失敗（不影響指標）：{str(_ne)[:80]}")
+
+    # ── V5.0 漸進式培訓等級選擇器 ────────────────────────────────────
+    _vm_opts = ["🟢 L1 新手導航", "🟡 L2 學徒覆盤", "🔴 L3 老手沙盤"]
+    _view_mode = st.radio(
+        "📊 視角等級",
+        _vm_opts,
+        index=_vm_opts.index(st.session_state.get("view_mode", "🔴 L3 老手沙盤")),
+        horizontal=True,
+        key="view_mode_radio",
+        help="L1：三防線 Gauge + 待辦清單  ｜  L2：+ 歷史危機對照圖  ｜  L3：+ 全 Z-Score 矩陣",
+    )
+    st.session_state["view_mode"] = _view_mode
+    _show_l2_plus = _view_mode != "🟢 L1 新手導航"
+    _show_l3      = _view_mode == "🔴 L3 老手沙盤"
 
     if st.session_state.macro_done:
         ind   = st.session_state.indicators
@@ -440,175 +455,289 @@ with tab1:
                 unsafe_allow_html=True)
         st.divider()
 
-        # ── 景氣時鐘 + 天氣 + 配置 ──
-        _ind_dates = [v.get("date","") for v in ind.values() if isinstance(v,dict) and v.get("date")]
-        if _ind_dates:
-            st.caption(f"📅 指標資料截至 {max(_ind_dates)}（FRED 有發布時差，部分指標為上月）")
-
-        PHASES = ["衰退","復甦","擴張","高峰"]
-        PCOLORS = {"衰退":"#ff9800","復甦":"#64b5f6","擴張":"#00c853","高峰":"#f44336"}
-        nxt_ph = phase.get("next_phase", ph)
-        t_arrow = phase.get("trend_arrow","→"); t_label = phase.get("trend_label","持穩")
-        t_color = phase.get("trend_color","#888888"); nxt_color = PCOLORS.get(nxt_ph,"#888")
-
-        c1, c2, c3 = st.columns([1.2, 1, 1.5])
-        with c1:
-            infl_html = (f"<div style='background:#0d1117;border:1px dashed {t_color};border-radius:8px;padding:6px 10px;margin-top:10px;text-align:center'>"
-                         f"<div style='color:#888;font-size:10px;margin-bottom:4px'>拐點偵測</div>"
-                         f"<div style='font-size:15px;font-weight:800;color:{ph_c}'>{ph}</div>"
-                         f"<div style='font-size:18px;color:{t_color};margin:2px 0'>{t_arrow}</div>"
-                         f"<div style='font-size:15px;font-weight:800;color:{nxt_color}'>{'（持穩）' if nxt_ph==ph else nxt_ph}</div>"
-                         f"<div style='color:{t_color};font-size:10px;margin-top:4px'>{t_label}</div></div>")
-            st.markdown(f"<div style='background:#0d1117;border:2px solid {ph_c};border-radius:14px;padding:18px;text-align:center'>"
-                        f"<div style='color:#888;font-size:12px;letter-spacing:2px'>景氣時鐘</div>"
-                        f"<div style='color:{ph_c};font-size:42px;font-weight:900;margin:6px 0'>{ph}</div>"
-                        f"<div style='display:flex;justify-content:center;gap:8px;margin-top:8px'>"
-                        + "".join(f"<span style='background:{PCOLORS[p] if p==ph else '#1a1a2e'};color:{'#fff' if p==ph else '#555'};padding:3px 10px;border-radius:20px;font-size:11px'>{p}</span>" for p in PHASES)
-                        + f"</div>{infl_html}</div>", unsafe_allow_html=True)
-        with c2:
-            bar = "█"*int(sc) + "░"*(10-int(sc))
-            rec_html = ""
-            if rec_p is not None:
-                rc = "#f44336" if rec_p>60 else ("#ff9800" if rec_p>35 else "#00c853")
-                rec_html = f"<div style='margin-top:8px'><div style='color:#888;font-size:11px'>衰退機率</div><div style='color:{rc};font-size:22px;font-weight:800'>{rec_p:.0f}%</div></div>"
-            _w_icon  = phase.get("weather_icon","⛅"); _w_label = phase.get("weather_label","多雲")
-            _w_color = phase.get("weather_color","#90caf9"); _w_alloc = phase.get("weather_alloc_str","")
-            _wbg = "linear-gradient(135deg,#1a1000,#2a1f00)" if "晴" in _w_label else "linear-gradient(135deg,#0d1a2a,#0d1117)"
-            st.markdown(f"<div style='background:{_wbg};border:2px solid {_w_color};border-radius:14px;padding:18px;text-align:center'>"
-                        f"<div style='color:#888;font-size:11px;letter-spacing:2px;margin-bottom:4px'>總經天氣預報</div>"
-                        f"<div style='font-size:48px;line-height:1.1;margin:4px 0'>{_w_icon}</div>"
-                        f"<div style='color:{_w_color};font-size:22px;font-weight:900'>{_w_label}</div>"
-                        f"<div style='color:#ccc;font-size:11px;margin:6px 0;padding:4px 8px;background:#1a1a1a;border-radius:6px'>建議：{_w_alloc}</div>"
-                        f"<div style='color:{ph_c};font-size:13px;font-weight:700;margin-top:4px'>Macro Score {sc}/10</div>"
-                        f"<div style='color:{ph_c};font-size:10px;letter-spacing:1px'>{bar}</div>"
-                        f"{rec_html}</div>", unsafe_allow_html=True)
-        with c3:
-            alloc_bars = "".join(
-                f"<div style='display:flex;align-items:center;margin:5px 0'>"
-                f"<div style='color:#ccc;width:38px;font-size:13px'>{k}</div>"
-                f"<div style='flex:1;background:#161b22;border-radius:4px;height:14px;margin:0 8px'>"
-                f"<div style='background:{'#2196f3' if k=='股票' else '#ff9800' if k=='債券' else '#78909c'};width:{v}%;height:100%;border-radius:4px'></div></div>"
-                f"<div style='color:{'#2196f3' if k=='股票' else '#ff9800' if k=='債券' else '#78909c'};font-weight:700;font-size:13px'>{v}%</div></div>"
-                for k,v in alloc.items())
-            st.markdown(f"<div style='background:#0d1117;border:1px solid #30363d;border-radius:14px;padding:18px'>"
-                        f"<div style='color:#888;font-size:12px;letter-spacing:2px;margin-bottom:10px'>AI 建議配置</div>"
-                        f"{alloc_bars}"
-                        f"<div style='color:#69f0ae;font-size:11px;margin-top:8px;line-height:1.6'>{advice}</div>"
-                        f"</div>", unsafe_allow_html=True)
-
-        # ── 風險警示燈號 ──
-        _vix_v   = (ind.get("VIX") or {}).get("value")
-        _spr_v   = (ind.get("YIELD_10Y2Y") or {}).get("value")
-        _hy_v    = (ind.get("HY_SPREAD") or {}).get("value")
-        _risk    = 0; _msgs = []
-        if _vix_v is not None:
-            if _vix_v > 30:  _risk = max(_risk,2); _msgs.append(f"VIX={_vix_v:.1f}>30（市場恐慌）")
-            elif _vix_v > 22: _risk = max(_risk,1); _msgs.append(f"VIX={_vix_v:.1f}偏高")
-        if _spr_v is not None:
-            if _spr_v < -0.3: _risk = max(_risk,2); _msgs.append(f"殖利率深度倒掛{_spr_v:.3f}%")
-            elif _spr_v < 0:  _risk = max(_risk,1); _msgs.append(f"殖利率倒掛{_spr_v:.3f}%")
-        if _hy_v is not None and _hy_v > 6:
-            _risk = max(_risk,2); _msgs.append(f"HY利差={_hy_v:.2f}%>6%（信用風險）")
-        if _risk == 2 and _msgs:
-            st.error(f"🚨 **總經高風險** | {'　|　'.join(_msgs)}\n\n⚠️ 建議提高投資等級債券基金水位，核心部位 ≥80%")
-        elif _risk == 1 and _msgs:
-            st.warning(f"⚠️ 市場溫度偏高：{'　|　'.join(_msgs)}　→ 衛星部位設停利")
-
-        # ── 系統性風險偵測（新聞 NLP）──
-        _srd = st.session_state.get("systemic_risk_data")
-        if _srd:
-            _rl  = _srd.get("risk_level","LOW")
-            _rs  = _srd.get("risk_score",0)
-            _rc  = _srd.get("risk_color","#888")
-            _ri  = _srd.get("risk_icon","⬜")
-            _adv = _srd.get("advice","")
-            _trig = _srd.get("triggered",[])
-            _srd_bg = {"HIGH":"#2a0a0a","MEDIUM":"#2a1f00","LOW":"#0a1a0a"}.get(_rl,"#111")
-            _srd_border = {"HIGH":"#f44336","MEDIUM":"#ff9800","LOW":"#00c853"}.get(_rl,"#30363d")
-            _trig_html = ""
-            if _trig:
-                _trig_html = "<div style='margin-top:6px;display:flex;flex-wrap:wrap;gap:4px'>"
-                for t in _trig[:6]:
-                    _trig_html += f"<span style='background:#1a1a2e;color:{_rc};border:1px solid {_rc};padding:2px 8px;border-radius:12px;font-size:11px'>#{t['keyword']}({t['sub_score']})</span>"
-                _trig_html += "</div>"
-            st.markdown(
-                f"<div style='background:{_srd_bg};border:1px solid {_srd_border};border-radius:10px;padding:12px 16px;margin:8px 0'>"
-                f"<div style='display:flex;align-items:center;gap:10px'>"
-                f"<span style='font-size:24px'>{_ri}</span>"
-                f"<div><div style='color:#888;font-size:11px'>新聞系統性風險偵測</div>"
-                f"<div style='color:{_rc};font-weight:800;font-size:15px'>{_rl} （評分 {_rs}）</div></div>"
-                f"<div style='flex:1;text-align:right;color:#ccc;font-size:11px'>{_adv}</div></div>"
-                f"{_trig_html}</div>", unsafe_allow_html=True)
-
-        # ── 美林時鐘老師語音卡片（V3-2 Core Protocol v3.0）────────────
-        _ml_phase_data = {
-            "衰退": {
-                "icon": "❄️", "color": "#64b5f6",
-                "fund_type": "長天期美債基金、高評級投資等級債",
-                "teacher": "陳重銘老師提醒：衰退期現金為王，優先配置高評級債券基金。新手最常在此時恐慌贖回，老手反而逢低累積單位數，等景氣復甦自然回漲。",
-                "action": "核心佔比 ≥80%，衛星暫停加碼，開啟定期定額迎接復甦",
-            },
-            "復甦": {
-                "icon": "🌱", "color": "#69f0ae",
-                "fund_type": "市值型 ETF、中小型股基金、成長型股票基金",
-                "teacher": "孫慶龍老師分析：復甦期是佈局成長型基金的黃金視窗。PMI 底部翻揚、殖利率倒掛收斂，是最佳進場訊號。避免死守純防禦型基金，錯過早期漲幅。",
-                "action": "積極佈局：股票型基金提升至 60%，衛星佈局中小型或科技主題",
-            },
-            "擴張": {
-                "icon": "🌤️", "color": "#ffcc02",
-                "fund_type": "均衡配置；科技/主題衛星佈局持續追蹤趨勢",
-                "teacher": "陳重銘老師心法：擴張期繼續持有，讓時間複利發揮。定期定額勿停扣，配息收入持續再投入衛星資產，以息養股最佳時機。",
-                "action": "持有核心配息資產，衛星設停利 +15%，注意 VIX 是否異常低",
-            },
-            "高峰": {
-                "icon": "🔥", "color": "#f44336",
-                "fund_type": "核心配息基金（降低衛星部位，落袋為安）",
-                "teacher": "孫慶龍老師警示：高峰期居高思危！PMI 高檔鈍化、VIX 極低往往是反轉前兆。老手此時將衛星獲利轉回核心穩健配息基金，不追高。",
-                "action": "衛星部位停利出場，核心佔比回升至 ≥75%，現金水位預備",
-            },
-        }
-        _ml_d = _ml_phase_data.get(ph, {
-            "icon": "⛅", "color": "#888",
-            "fund_type": "均衡配置",
-            "teacher": "景氣位階轉換中，維持核心/衛星均衡配置。",
-            "action": "持續定期定額，等待景氣訊號明確後再調整",
-        })
-        # VIX 超跌機會訊號
-        _ml_vix_alert = ""
-        if _vix_v is not None and _vix_v > 30:
-            _ml_vix_alert = (
-                f"<div style='border-left:3px solid #69f0ae;background:#0a1a0a;"
-                f"padding:8px 12px;margin-top:8px;border-radius:0 6px 6px 0;font-size:12px'>"
-                f"⚡ <b style='color:#69f0ae'>VIX={_vix_v:.1f} 超過 30（市場恐慌）</b>"
-                f"——陳重銘老師「左側交易」訊號，核心資產分批加碼時機！</div>"
-            )
+        # ══════════════════════════════════════════════════
+        # L1 新手待辦清單（所有等級均顯示）
+        # ══════════════════════════════════════════════════
+        _w_icon2  = phase.get("weather_icon", "⛅")
+        _w_label2 = phase.get("weather_label", "多雲")
+        _l1_stock = alloc.get("股票", 50)
+        _l1_bond  = alloc.get("債券", 30)
+        _l1_cash  = alloc.get("現金", 20)
+        _l1_checks = [
+            f"確認核心部位是否符合 AI 建議：股 {_l1_stock}% / 債 {_l1_bond}% / 現金 {_l1_cash}%",
+        ]
+        if _sahm_v >= 0.5:
+            _l1_checks.append(f"⚠️ **薩姆衰退警報已觸發**（{_sahm_v:.2f}pp）：暫停衛星加碼，保留防守型部位")
+        if _sloos_v > 20:
+            _l1_checks.append(f"📊 **銀行緊縮偵測**（SLOOS {_sloos_v:.1f}%）：高收益債基金降至 10% 以下")
+        if _adl_v < -2:
+            _l1_checks.append(f"🌍 **市場廣度警示**（RSP/SPY {_adl_v:.2f}%）：減少主題/集中型基金")
+        _l1_checks.append("定期定額不停扣（除非景氣位階進入「高峰」且 VIX < 15）")
+        _l1_checks.append(f"本週核心原則：景氣「{ph}」，{(advice or '均衡配置，嚴守紀律')[:40]}。")
+        _l1_md = "\n".join(f"- [ ] {c}" for c in _l1_checks)
         st.markdown(
-            f"<div style='background:linear-gradient(135deg,#0d1117,#0d1a0d);"
-            f"border:2px solid {_ml_d['color']};border-radius:12px;"
-            f"padding:16px 20px;margin:12px 0'>"
-            f"<div style='display:flex;align-items:center;gap:10px;margin-bottom:10px'>"
-            f"<span style='font-size:28px'>{_ml_d['icon']}</span>"
-            f"<div>"
-            f"<div style='color:#888;font-size:11px;letter-spacing:1px'>📐 美林時鐘 · 老師語音</div>"
-            f"<div style='color:{_ml_d['color']};font-weight:800;font-size:16px'>"
-            f"{ph} 期 → 適合：{_ml_d['fund_type']}</div>"
-            f"</div></div>"
-            f"<div style='color:#ccc;font-size:13px;line-height:1.7;border-left:3px solid {_ml_d['color']};"
-            f"padding-left:12px'>{_ml_d['teacher']}</div>"
-            f"<div style='margin-top:10px;background:#1a1f2e;border-radius:6px;padding:8px 12px;"
-            f"font-size:12px;color:#e6edf3'>🎯 <b>本階段行動建議</b>：{_ml_d['action']}</div>"
-            f"{_ml_vix_alert}"
-            f"</div>",
+            f"<div style='background:#0d1117;border:1px solid #30363d;border-radius:12px;"
+            f"padding:16px 20px;margin:8px 0'>"
+            f"<div style='color:#e6edf3;font-weight:700;margin-bottom:10px'>"
+            f"📋 本週操作清單（{_w_label2} {_w_icon2}）</div></div>",
             unsafe_allow_html=True)
+        st.markdown(_l1_md)
 
-        # ── 宏觀風險溫度計（Core Protocol v2.0 Ch.3 多軸複合圖）──────
+        # ══════════════════════════════════════════════════
+        # L2 歷史危機對照圖（L2 + L3 顯示）
+        # ══════════════════════════════════════════════════
+        if _show_l2_plus:
+            with st.expander("📈 L2 景氣循環歷史對照圖（危機紅區 × 指標趨勢）", expanded=True):
+                _sahm_s  = (ind.get("SAHM")  or {}).get("series")
+                _sloos_s = (ind.get("SLOOS") or {}).get("series")
+                _adl_s   = (ind.get("ADL")   or {}).get("series")
+                _l2_has  = any(s is not None and len(s) >= 5
+                               for s in [_sahm_s, _sloos_s, _adl_s])
+                if _l2_has:
+                    import pandas as _pd_l2
+                    from plotly.subplots import make_subplots as _msp_l2
+                    _l2fig = _msp_l2(specs=[[{"secondary_y": True}]])
+
+                    # Sahm Rule 主線
+                    if _sahm_s is not None and len(_sahm_s) >= 5:
+                        _sh = _sahm_s if isinstance(_sahm_s, _pd_l2.Series) else _pd_l2.Series(_sahm_s)
+                        _sh = _sh.dropna().tail(120)
+                        _l2fig.add_trace(go.Scatter(
+                            x=_sh.index, y=_sh.values, name="薩姆規則 (pp)",
+                            line={"color": "#64b5f6", "width": 2},
+                            hovertemplate="Sahm: %{y:.2f}pp<extra></extra>"),
+                            secondary_y=False)
+                        # 0.5 觸發線
+                        _l2fig.add_hline(y=0.5, line_dash="dash",
+                                         line_color="#f44336", opacity=0.6,
+                                         annotation_text="衰退觸發線 0.5",
+                                         annotation_font_color="#f44336",
+                                         secondary_y=False)
+
+                    # SLOOS 副軸
+                    if _sloos_s is not None and len(_sloos_s) >= 5:
+                        _sl = _sloos_s if isinstance(_sloos_s, _pd_l2.Series) else _pd_l2.Series(_sloos_s)
+                        _sl = _sl.dropna().tail(120)
+                        _l2fig.add_trace(go.Scatter(
+                            x=_sl.index, y=_sl.values, name="SLOOS (%)",
+                            line={"color": "#ff9800", "width": 2, "dash": "dot"},
+                            hovertemplate="SLOOS: %{y:.1f}%<extra></extra>"),
+                            secondary_y=True)
+
+                    # 歷史危機紅色陰影
+                    _crises = [
+                        ("2007-12-01", "2009-06-01", "2008 金融海嘯"),
+                        ("2020-02-01", "2020-06-01", "2020 COVID"),
+                        ("2022-01-01", "2022-12-01", "2022 升息週期"),
+                    ]
+                    for _cs, _ce, _cn in _crises:
+                        _l2fig.add_vrect(
+                            x0=_cs, x1=_ce,
+                            fillcolor="rgba(244,67,54,0.12)",
+                            line_width=0,
+                            annotation_text=_cn,
+                            annotation_position="top left",
+                            annotation_font={"size": 9, "color": "#f44336"})
+
+                    _l2fig.update_layout(
+                        paper_bgcolor="#0e1117", plot_bgcolor="#0e1117",
+                        font_color="#e6edf3", height=320,
+                        margin=dict(t=30, b=20, l=50, r=50),
+                        legend=dict(orientation="h", y=-0.15,
+                                    font={"size": 10}),
+                        hovermode="x unified")
+                    _l2fig.update_yaxes(title_text="薩姆規則 (pp)",
+                                        gridcolor="#21262d", secondary_y=False)
+                    _l2fig.update_yaxes(title_text="SLOOS (%)",
+                                        gridcolor="#21262d", secondary_y=True)
+                    _l2fig.update_xaxes(gridcolor="#21262d")
+                    st.plotly_chart(_l2fig, use_container_width=True)
+                    st.caption("🔴 紅色陰影 = 歷史衰退/危機區間，藍線 = 薩姆規則，橘虛線 = SLOOS 銀行放貸標準")
+                else:
+                    st.info("📡 請先載入總經資料以顯示歷史對照圖")
+
+        # ── L2 視角到此結束，L3 繼續顯示完整儀表板 ──────────────────
+        if not _show_l2_plus:
+            pass  # L1 只看 Gauge + 清單，不繼續渲染下方 L3 內容
+
+        # ── 景氣時鐘 + 天氣 + 配置 ──（L2/L3）──────────────────────
+        if _show_l2_plus:
+            _ind_dates = [v.get("date","") for v in ind.values() if isinstance(v,dict) and v.get("date")]
+            if _ind_dates:
+                st.caption(f"📅 指標資料截至 {max(_ind_dates)}（FRED 有發布時差，部分指標為上月）")
+
+            PHASES = ["衰退","復甦","擴張","高峰"]
+            PCOLORS = {"衰退":"#ff9800","復甦":"#64b5f6","擴張":"#00c853","高峰":"#f44336"}
+            nxt_ph = phase.get("next_phase", ph)
+            t_arrow = phase.get("trend_arrow","→"); t_label = phase.get("trend_label","持穩")
+            t_color = phase.get("trend_color","#888888"); nxt_color = PCOLORS.get(nxt_ph,"#888")
+
+            c1, c2, c3 = st.columns([1.2, 1, 1.5])
+            with c1:
+                infl_html = (f"<div style='background:#0d1117;border:1px dashed {t_color};border-radius:8px;padding:6px 10px;margin-top:10px;text-align:center'>"
+                             f"<div style='color:#888;font-size:10px;margin-bottom:4px'>拐點偵測</div>"
+                             f"<div style='font-size:15px;font-weight:800;color:{ph_c}'>{ph}</div>"
+                             f"<div style='font-size:18px;color:{t_color};margin:2px 0'>{t_arrow}</div>"
+                             f"<div style='font-size:15px;font-weight:800;color:{nxt_color}'>{'（持穩）' if nxt_ph==ph else nxt_ph}</div>"
+                             f"<div style='color:{t_color};font-size:10px;margin-top:4px'>{t_label}</div></div>")
+                st.markdown(f"<div style='background:#0d1117;border:2px solid {ph_c};border-radius:14px;padding:18px;text-align:center'>"
+                            f"<div style='color:#888;font-size:12px;letter-spacing:2px'>景氣時鐘</div>"
+                            f"<div style='color:{ph_c};font-size:42px;font-weight:900;margin:6px 0'>{ph}</div>"
+                            f"<div style='display:flex;justify-content:center;gap:8px;margin-top:8px'>"
+                            + "".join(f"<span style='background:{PCOLORS[p] if p==ph else '#1a1a2e'};color:{'#fff' if p==ph else '#555'};padding:3px 10px;border-radius:20px;font-size:11px'>{p}</span>" for p in PHASES)
+                            + f"</div>{infl_html}</div>", unsafe_allow_html=True)
+            with c2:
+                bar = "█"*int(sc) + "░"*(10-int(sc))
+                rec_html = ""
+                if rec_p is not None:
+                    rc = "#f44336" if rec_p>60 else ("#ff9800" if rec_p>35 else "#00c853")
+                    rec_html = f"<div style='margin-top:8px'><div style='color:#888;font-size:11px'>衰退機率</div><div style='color:{rc};font-size:22px;font-weight:800'>{rec_p:.0f}%</div></div>"
+                _w_icon  = phase.get("weather_icon","⛅"); _w_label = phase.get("weather_label","多雲")
+                _w_color = phase.get("weather_color","#90caf9"); _w_alloc = phase.get("weather_alloc_str","")
+                _wbg = "linear-gradient(135deg,#1a1000,#2a1f00)" if "晴" in _w_label else "linear-gradient(135deg,#0d1a2a,#0d1117)"
+                st.markdown(f"<div style='background:{_wbg};border:2px solid {_w_color};border-radius:14px;padding:18px;text-align:center'>"
+                            f"<div style='color:#888;font-size:11px;letter-spacing:2px;margin-bottom:4px'>總經天氣預報</div>"
+                            f"<div style='font-size:48px;line-height:1.1;margin:4px 0'>{_w_icon}</div>"
+                            f"<div style='color:{_w_color};font-size:22px;font-weight:900'>{_w_label}</div>"
+                            f"<div style='color:#ccc;font-size:11px;margin:6px 0;padding:4px 8px;background:#1a1a1a;border-radius:6px'>建議：{_w_alloc}</div>"
+                            f"<div style='color:{ph_c};font-size:13px;font-weight:700;margin-top:4px'>Macro Score {sc}/10</div>"
+                            f"<div style='color:{ph_c};font-size:10px;letter-spacing:1px'>{bar}</div>"
+                            f"{rec_html}</div>", unsafe_allow_html=True)
+            with c3:
+                alloc_bars = "".join(
+                    f"<div style='display:flex;align-items:center;margin:5px 0'>"
+                    f"<div style='color:#ccc;width:38px;font-size:13px'>{k}</div>"
+                    f"<div style='flex:1;background:#161b22;border-radius:4px;height:14px;margin:0 8px'>"
+                    f"<div style='background:{'#2196f3' if k=='股票' else '#ff9800' if k=='債券' else '#78909c'};width:{v}%;height:100%;border-radius:4px'></div></div>"
+                    f"<div style='color:{'#2196f3' if k=='股票' else '#ff9800' if k=='債券' else '#78909c'};font-weight:700;font-size:13px'>{v}%</div></div>"
+                    for k,v in alloc.items())
+                st.markdown(f"<div style='background:#0d1117;border:1px solid #30363d;border-radius:14px;padding:18px'>"
+                            f"<div style='color:#888;font-size:12px;letter-spacing:2px;margin-bottom:10px'>AI 建議配置</div>"
+                            f"{alloc_bars}"
+                            f"<div style='color:#69f0ae;font-size:11px;margin-top:8px;line-height:1.6'>{advice}</div>"
+                            f"</div>", unsafe_allow_html=True)
+
+        # ── 風險警示燈號 + 系統性風險 + 美林時鐘（L2/L3）────────────
+        if _show_l2_plus:
+            _vix_v   = (ind.get("VIX") or {}).get("value")
+            _spr_v   = (ind.get("YIELD_10Y2Y") or {}).get("value")
+            _hy_v    = (ind.get("HY_SPREAD") or {}).get("value")
+            _risk    = 0; _msgs = []
+            if _vix_v is not None:
+                if _vix_v > 30:  _risk = max(_risk,2); _msgs.append(f"VIX={_vix_v:.1f}>30（市場恐慌）")
+                elif _vix_v > 22: _risk = max(_risk,1); _msgs.append(f"VIX={_vix_v:.1f}偏高")
+            if _spr_v is not None:
+                if _spr_v < -0.3: _risk = max(_risk,2); _msgs.append(f"殖利率深度倒掛{_spr_v:.3f}%")
+                elif _spr_v < 0:  _risk = max(_risk,1); _msgs.append(f"殖利率倒掛{_spr_v:.3f}%")
+            if _hy_v is not None and _hy_v > 6:
+                _risk = max(_risk,2); _msgs.append(f"HY利差={_hy_v:.2f}%>6%（信用風險）")
+            if _risk == 2 and _msgs:
+                st.error(f"🚨 **總經高風險** | {'　|　'.join(_msgs)}\n\n⚠️ 建議提高投資等級債券基金水位，核心部位 ≥80%")
+            elif _risk == 1 and _msgs:
+                st.warning(f"⚠️ 市場溫度偏高：{'　|　'.join(_msgs)}　→ 衛星部位設停利")
+
+            # ── 系統性風險偵測（新聞 NLP）──
+            _srd = st.session_state.get("systemic_risk_data")
+            if _srd:
+                _rl  = _srd.get("risk_level","LOW")
+                _rs  = _srd.get("risk_score",0)
+                _rc  = _srd.get("risk_color","#888")
+                _ri  = _srd.get("risk_icon","⬜")
+                _adv = _srd.get("advice","")
+                _trig = _srd.get("triggered",[])
+                _srd_bg = {"HIGH":"#2a0a0a","MEDIUM":"#2a1f00","LOW":"#0a1a0a"}.get(_rl,"#111")
+                _srd_border = {"HIGH":"#f44336","MEDIUM":"#ff9800","LOW":"#00c853"}.get(_rl,"#30363d")
+                _trig_html = ""
+                if _trig:
+                    _trig_html = "<div style='margin-top:6px;display:flex;flex-wrap:wrap;gap:4px'>"
+                    for t in _trig[:6]:
+                        _trig_html += f"<span style='background:#1a1a2e;color:{_rc};border:1px solid {_rc};padding:2px 8px;border-radius:12px;font-size:11px'>#{t['keyword']}({t['sub_score']})</span>"
+                    _trig_html += "</div>"
+                st.markdown(
+                    f"<div style='background:{_srd_bg};border:1px solid {_srd_border};border-radius:10px;padding:12px 16px;margin:8px 0'>"
+                    f"<div style='display:flex;align-items:center;gap:10px'>"
+                    f"<span style='font-size:24px'>{_ri}</span>"
+                    f"<div><div style='color:#888;font-size:11px'>新聞系統性風險偵測</div>"
+                    f"<div style='color:{_rc};font-weight:800;font-size:15px'>{_rl} （評分 {_rs}）</div></div>"
+                    f"<div style='flex:1;text-align:right;color:#ccc;font-size:11px'>{_adv}</div></div>"
+                    f"{_trig_html}</div>", unsafe_allow_html=True)
+
+            # ── 美林時鐘老師語音卡片（V3-2 Core Protocol v3.0）──────────
+            _ml_phase_data = {
+                "衰退": {
+                    "icon": "❄️", "color": "#64b5f6",
+                    "fund_type": "長天期美債基金、高評級投資等級債",
+                    "teacher": "陳重銘老師提醒：衰退期現金為王，優先配置高評級債券基金。新手最常在此時恐慌贖回，老手反而逢低累積單位數，等景氣復甦自然回漲。",
+                    "action": "核心佔比 ≥80%，衛星暫停加碼，開啟定期定額迎接復甦",
+                },
+                "復甦": {
+                    "icon": "🌱", "color": "#69f0ae",
+                    "fund_type": "市值型 ETF、中小型股基金、成長型股票基金",
+                    "teacher": "孫慶龍老師分析：復甦期是佈局成長型基金的黃金視窗。PMI 底部翻揚、殖利率倒掛收斂，是最佳進場訊號。避免死守純防禦型基金，錯過早期漲幅。",
+                    "action": "積極佈局：股票型基金提升至 60%，衛星佈局中小型或科技主題",
+                },
+                "擴張": {
+                    "icon": "🌤️", "color": "#ffcc02",
+                    "fund_type": "均衡配置；科技/主題衛星佈局持續追蹤趨勢",
+                    "teacher": "陳重銘老師心法：擴張期繼續持有，讓時間複利發揮。定期定額勿停扣，配息收入持續再投入衛星資產，以息養股最佳時機。",
+                    "action": "持有核心配息資產，衛星設停利 +15%，注意 VIX 是否異常低",
+                },
+                "高峰": {
+                    "icon": "🔥", "color": "#f44336",
+                    "fund_type": "核心配息基金（降低衛星部位，落袋為安）",
+                    "teacher": "孫慶龍老師警示：高峰期居高思危！PMI 高檔鈍化、VIX 極低往往是反轉前兆。老手此時將衛星獲利轉回核心穩健配息基金，不追高。",
+                    "action": "衛星部位停利出場，核心佔比回升至 ≥75%，現金水位預備",
+                },
+            }
+            _ml_d = _ml_phase_data.get(ph, {
+                "icon": "⛅", "color": "#888",
+                "fund_type": "均衡配置",
+                "teacher": "景氣位階轉換中，維持核心/衛星均衡配置。",
+                "action": "持續定期定額，等待景氣訊號明確後再調整",
+            })
+            _ml_vix_alert = ""
+            if _vix_v is not None and _vix_v > 30:
+                _ml_vix_alert = (
+                    f"<div style='border-left:3px solid #69f0ae;background:#0a1a0a;"
+                    f"padding:8px 12px;margin-top:8px;border-radius:0 6px 6px 0;font-size:12px'>"
+                    f"⚡ <b style='color:#69f0ae'>VIX={_vix_v:.1f} 超過 30（市場恐慌）</b>"
+                    f"——陳重銘老師「左側交易」訊號，核心資產分批加碼時機！</div>"
+                )
+            st.markdown(
+                f"<div style='background:linear-gradient(135deg,#0d1117,#0d1a0d);"
+                f"border:2px solid {_ml_d['color']};border-radius:12px;"
+                f"padding:16px 20px;margin:12px 0'>"
+                f"<div style='display:flex;align-items:center;gap:10px;margin-bottom:10px'>"
+                f"<span style='font-size:28px'>{_ml_d['icon']}</span>"
+                f"<div>"
+                f"<div style='color:#888;font-size:11px;letter-spacing:1px'>📐 美林時鐘 · 老師語音</div>"
+                f"<div style='color:{_ml_d['color']};font-weight:800;font-size:16px'>"
+                f"{ph} 期 → 適合：{_ml_d['fund_type']}</div>"
+                f"</div></div>"
+                f"<div style='color:#ccc;font-size:13px;line-height:1.7;border-left:3px solid {_ml_d['color']};"
+                f"padding-left:12px'>{_ml_d['teacher']}</div>"
+                f"<div style='margin-top:10px;background:#1a1f2e;border-radius:6px;padding:8px 12px;"
+                f"font-size:12px;color:#e6edf3'>🎯 <b>本階段行動建議</b>：{_ml_d['action']}</div>"
+                f"{_ml_vix_alert}"
+                f"</div>",
+                unsafe_allow_html=True)
+
+        # ── 宏觀風險溫度計 + 景氣循環羅盤 + AI（僅 L3）──────────────
+        import pandas as _pd_mac
+        def _safe_series(s):
+            if s is None: return None
+            try:
+                if not isinstance(s, _pd_mac.Series): s = _pd_mac.Series(s)
+                return s.dropna().tail(60)
+            except Exception: return None
+
         _pmi_s   = (ind.get("PMI")         or {}).get("series")
         _spr_s   = (ind.get("YIELD_10Y2Y") or {}).get("series")
         _vix_s   = (ind.get("VIX")         or {}).get("series")
         _has_chart = any(
             s is not None and hasattr(s, "__len__") and len(s) >= 4
             for s in [_pmi_s, _spr_s, _vix_s])
-        if _has_chart:
+        if _has_chart and _show_l3:
             with st.expander("📊 宏觀風險溫度計（多軸複合圖）", expanded=True):
                 from plotly.subplots import make_subplots
                 fig_mac = make_subplots(
@@ -742,7 +871,7 @@ with tab1:
         _rate_s  = _safe_series((ind.get("FED_RATE") or {}).get("series"))
         _has_compass = any(s is not None and len(s) >= 4
                            for s in [_sahm_s, _adl_s, _rate_s])
-        if _has_compass:
+        if _has_compass and _show_l3:
             with st.expander("🧭 景氣循環羅盤（薩姆規則 + 市場廣度 + 利率）", expanded=False):
                 from plotly.subplots import make_subplots as _msp5
                 fig_compass = _msp5(rows=1, cols=1,
@@ -811,38 +940,41 @@ with tab1:
                                     "衛星部位以三率正成長基金為主，避開製造業循環標的")
                 st.info(_compass_txt)
 
-        # ── 指標貢獻明細（折疊）──
-        with st.expander("📊 各指標貢獻明細", expanded=False):
-            _rows = []
-            for _ik, _iv in ind.items():
-                if not isinstance(_iv, dict): continue
-                _rows.append({
-                    "指標": _iv.get("name",_ik)[:16],
-                    "數值": f"{_iv.get('value'):.2f}" if isinstance(_iv.get("value"),(int,float)) else str(_iv.get("value",""))[:10],
-                    "信號": _iv.get("signal","⬜"),
-                    "得分": round(max(-_iv.get("weight",1), min(_iv.get("weight",1), _iv.get("score",0))),2),
-                    "權重": _iv.get("weight",1),
-                })
-            if _rows:
-                st.dataframe(pd.DataFrame(_rows), use_container_width=True, hide_index=True)
+        # ── 指標貢獻明細（折疊）── L3 only
+        if _show_l3:
+            with st.expander("📊 各指標貢獻明細", expanded=False):
+                _rows = []
+                for _ik, _iv in ind.items():
+                    if not isinstance(_iv, dict): continue
+                    _rows.append({
+                        "指標": _iv.get("name",_ik)[:16],
+                        "數值": f"{_iv.get('value'):.2f}" if isinstance(_iv.get("value"),(int,float)) else str(_iv.get("value",""))[:10],
+                        "信號": _iv.get("signal","⬜"),
+                        "得分": round(max(-_iv.get("weight",1), min(_iv.get("weight",1), _iv.get("score",0))),2),
+                        "權重": _iv.get("weight",1),
+                    })
+                if _rows:
+                    st.dataframe(pd.DataFrame(_rows), use_container_width=True, hide_index=True)
 
-        # ── 市場新聞（折疊）──
-        _news_items = st.session_state.get("news_items",[])
-        if _news_items:
-            with st.expander(f"📰 市場新聞（{len(_news_items)} 則）", expanded=False):
-                for _ni in _news_items[:20]:
-                    _nt = _ni.get("title","")[:90]
-                    _ns = _ni.get("source","")
-                    _nu = _ni.get("url","") or _ni.get("link","")
-                    _nd = str(_ni.get("published",""))[:16]
-                    if _nu:
-                        st.markdown(f"**[{_nt}]({_nu})** <span style='color:#888;font-size:11px'>｜{_ns} {_nd}</span>", unsafe_allow_html=True)
-                    else:
-                        st.markdown(f"**{_nt}** <span style='color:#888;font-size:11px'>｜{_ns} {_nd}</span>", unsafe_allow_html=True)
+        # ── 市場新聞（折疊）── L3 only
+        if _show_l3:
+            _news_items = st.session_state.get("news_items",[])
+            if _news_items:
+                with st.expander(f"📰 市場新聞（{len(_news_items)} 則）", expanded=False):
+                    for _ni in _news_items[:20]:
+                        _nt = _ni.get("title","")[:90]
+                        _ns = _ni.get("source","")
+                        _nu = _ni.get("url","") or _ni.get("link","")
+                        _nd = str(_ni.get("published",""))[:16]
+                        if _nu:
+                            st.markdown(f"**[{_nt}]({_nu})** <span style='color:#888;font-size:11px'>｜{_ns} {_nd}</span>", unsafe_allow_html=True)
+                        else:
+                            st.markdown(f"**{_nt}** <span style='color:#888;font-size:11px'>｜{_ns} {_nd}</span>", unsafe_allow_html=True)
 
-        # ── AI 結構化總經摘要 ──
-        st.divider()
-        if GEMINI_KEY:
+        # ── AI 結構化總經摘要 ── L3 only
+        if _show_l3:
+            st.divider()
+        if GEMINI_KEY and _show_l3:
             # ── 三色燈號阻斷（Core Protocol v2.0 Ch.1）─────────────
             _ai_mac_pct = st.session_state.get("data_health_pct", 100)
             _ai_mac_tl  = st.session_state.get("data_health_traffic", "🟢")
@@ -884,30 +1016,56 @@ with tab2:
     st.markdown("## 🔍 單一基金深度分析")
     st.caption("輸入 MoneyDJ 代碼或網址，即時抓取淨值 / 持股 / 配息 / 風險指標")
 
-    col_url, col_go = st.columns([5,1])
-    with col_url:
+    # ── 境內 / 境外 明確切換 ──────────────────────────────────────
+    _t2_type_col, _t2_input_col, _t2_btn_col = st.columns([1.4, 4.2, 1])
+    with _t2_type_col:
+        fund_type_sel = st.radio(
+            "基金類型",
+            ["🏠 境內", "🌐 境外"],
+            horizontal=True,
+            key="fund_type_radio",
+            label_visibility="collapsed",
+        )
+        _t2_page_type = "yp010000" if "境內" in fund_type_sel else "yp010001"
+        st.caption("境內 yp010000 ／ 境外 yp010001")
+    with _t2_input_col:
         mj_url_input = st.text_input("MoneyDJ URL 或代碼",
-            placeholder="貼上 MoneyDJ 網址 或 輸入代碼（tlzf9 / LU0095940420）",
+            placeholder="輸入代碼（TLZF9 / ACTI94）或貼上完整 MoneyDJ 網址",
             label_visibility="collapsed", key="mj_url_input")
-    with col_go:
+    with _t2_btn_col:
         do_load = st.button("🚀 分析", type="primary", use_container_width=True, key="btn_mj_load")
 
+    def _build_moneydj_url(raw_input: str, page_type: str) -> str:
+        """
+        若使用者輸入純代碼（非 http URL），直接拼出正確的 MoneyDJ 完整網址。
+        境內 → yp010000.djhtm?a={code}
+        境外 → yp010001.djhtm?a={code}
+        """
+        _raw = raw_input.strip()
+        if _raw.startswith("http"):
+            return _raw  # 使用者貼了完整 URL，直接使用
+        # 純代碼：強制建立對應 page_type 的 URL
+        _code = _raw.upper()
+        return f"https://www.moneydj.com/funddj/ya/{page_type}.djhtm?a={_code}"
+
     if do_load and mj_url_input.strip():
-        with st.spinner("📡 抓取 MoneyDJ 資料（基本資料 + 持股 + 績效）..."):
-            fd_raw = fetch_fund_from_moneydj_url(mj_url_input.strip())
+        _resolved_url = _build_moneydj_url(mj_url_input.strip(), _t2_page_type)
+        with st.spinner(f"📡 抓取 {'境內' if _t2_page_type=='yp010000' else '境外'}基金資料..."):
+            fd_raw = fetch_fund_from_moneydj_url(_resolved_url)
             fd_raw = normalize_result_state(fd_raw)
             _status = fd_raw.get("status", classify_fetch_status(fd_raw))
             st.session_state.fund_data = {
-                "full_key":  fd_raw.get("full_key",""),
-                "fund_name": fd_raw.get("fund_name",""),
-                "portal":    "www",
-                "series":    fd_raw.get("series"),
-                "dividends": fd_raw.get("dividends",[]),
-                "metrics":   fd_raw.get("metrics",{}),
-                "error":     fd_raw.get("error"),
-                "warning":   fd_raw.get("warning"),
-                "status":    _status,
+                "full_key":    fd_raw.get("full_key",""),
+                "fund_name":   fd_raw.get("fund_name",""),
+                "portal":      "www",
+                "series":      fd_raw.get("series"),
+                "dividends":   fd_raw.get("dividends",[]),
+                "metrics":     fd_raw.get("metrics",{}),
+                "error":       fd_raw.get("error"),
+                "warning":     fd_raw.get("warning"),
+                "status":      _status,
                 "moneydj_raw": fd_raw,
+                "page_type":   _t2_page_type,
             }
             if fd_raw.get("error"):
                 st.error(f"❌ {fd_raw['error']}")
@@ -970,10 +1128,11 @@ with tab2:
                     f"🟡 部分資料（歷史淨值序列未取得，下方顯示已有資訊）</div>"
                     + (f"<div style='color:#ccc;font-size:11px;margin-bottom:6px'>{_p_err}</div>"
                        if _p_err else "")
-                    + f"<div style='color:#888;font-size:11px;border-top:1px solid #2a1f00;padding-top:8px;margin-top:4px'>"
-                    f"💡 解決方案：直接貼入 MoneyDJ 完整網址<br>"
-                    f"境外基金：<code>www.moneydj.com/funddj/ya/yp010001.djhtm?a={fk}</code></div>"
-                    f"</div>",
+                    + (f"<div style='color:#888;font-size:11px;border-top:1px solid #2a1f00;padding-top:8px;margin-top:4px'>"
+                    f"💡 解決方案：確認上方已選擇正確的「境內/境外」切換，或直接貼入完整 MoneyDJ 網址<br>"
+                    f"境內：<code>yp010000.djhtm?a={fk}</code>　"
+                    f"境外：<code>yp010001.djhtm?a={fk}</code></div>"
+                    f"</div>"),
                     unsafe_allow_html=True)
 
                 # 顯示已取得的基本資料
@@ -1456,7 +1615,8 @@ with tab2:
                             with st.spinner("Gemini 分析中..."):
                                 try:
                                     _ai = analyze_fund_json(GEMINI_KEY, name or fk, m,
-                                        mj_raw.get("perf",{}), phase_info_s, divs)
+                                        mj_raw.get("perf",{}), phase_info_s, divs,
+                                        view_mode=st.session_state.get("view_mode","🔴 L3 老手沙盤"))
                                     st.session_state.fund_ai_txt = _ai
                                 except Exception as _e:
                                     st.error(f"AI 分析失敗：{_e}")

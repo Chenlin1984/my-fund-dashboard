@@ -280,11 +280,13 @@ def analyze_fund_pro(api_key, fund_name, portal, full_key, metrics, dividends,
     return analyze_global(api_key, _ind, _ph, _pf, _fd)
 
 def analyze_fund_json(api_key, fund_name, metrics, perf_data, phase_info,
-                      risk_metrics=None, holdings=None, currency="USD"):
+                      risk_metrics=None, holdings=None, currency="USD",
+                      view_mode: str = "🔴 L3 老手沙盤"):
     """
-    基金教練 AI 分析 v3.0
+    基金教練 AI 分析 v3.0 + V5.0 動態 Prompt
     四節結構：景氣×基金類別 / 體質診斷 / 量化買賣點 / 操作待辦
     回傳 Markdown 字串（直接供 st.markdown 顯示）
+    view_mode: "🟢 L1 新手導航" | "🟡 L2 學徒覆盤" | "🔴 L3 老手沙盤"
     """
     m  = metrics   or {}
     pf = perf_data or {}
@@ -343,7 +345,25 @@ def analyze_fund_json(api_key, fund_name, metrics, perf_data, phase_info,
     except (ValueError, TypeError):
         sharpe_comment = "資料不足，無法評估"
 
+    # ── V5.0 動態 Prompt 語氣調整 ──────────────────────────────────
+    _tone_map = {
+        "🟢 L1 新手導航": (
+            "[語氣要求：白話文，用天氣/球賽比喻，完全禁止出現 Z-Score/標準差等術語。"
+            "第四節待辦清單是重點，讓新手看完立刻知道做什麼。]"
+        ),
+        "🟡 L2 學徒覆盤": (
+            "[語氣要求：解釋因果邏輯，必須引用歷史案例（2008/2020/2022）對比當前數據。"
+            "鼓勵用歷史驗證建立信任，適當提及指標但用比喻解釋。]"
+        ),
+        "🔴 L3 老手沙盤": (
+            "[語氣要求：專業量化，直接點出乖離率/Z-Score/Sharpe 數值，"
+            "分析背離訊號，給出精確進出場條件。]"
+        ),
+    }
+    _tone_directive = _tone_map.get(view_mode, _tone_map["🔴 L3 老手沙盤"])
+
     prompt = f"""你是整合「陳重銘以息養股」與「孫慶龍基金績效評估」方法論的台灣基金教練。
+{_tone_directive}
 ⚠️ 嚴格規則：只能根據以下快照分析，禁止引用外部資訊，禁止杜撰數字。
 
 【基金快照】
