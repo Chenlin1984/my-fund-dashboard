@@ -27,6 +27,11 @@ import requests, re, time
 import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)  # proxy 模式跳 SSL verify 時抑制警告
 
+
+class DataValidationError(Exception):
+    """資料驗證失敗：序列筆數不足 20 筆或為常數陣列，阻斷後續 AI 推論。"""
+    pass
+
 # ══════════════════════════════════════════════════════════════════
 # NAS Proxy 設定（讀取 st.secrets，缺失時降級直連）
 # ══════════════════════════════════════════════════════════════════
