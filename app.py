@@ -279,10 +279,12 @@ with tab1:
 
     # ── V5.0 漸進式培訓等級選擇器 ────────────────────────────────────
     _vm_opts = ["🟢 L1 新手導航", "🟡 L2 學徒覆盤", "🔴 L3 老手沙盤"]
+    _vm_saved = st.session_state.get("view_mode", "🔴 L3 老手沙盤")
+    _vm_idx   = _vm_opts.index(_vm_saved) if _vm_saved in _vm_opts else 2
     _view_mode = st.radio(
         "📊 視角等級",
         _vm_opts,
-        index=_vm_opts.index(st.session_state.get("view_mode", "🔴 L3 老手沙盤")),
+        index=_vm_idx,
         horizontal=True,
         key="view_mode_radio",
         help="L1：三防線 Gauge + 待辦清單  ｜  L2：+ 歷史危機對照圖  ｜  L3：+ 全 Z-Score 矩陣",
