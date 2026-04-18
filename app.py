@@ -298,190 +298,300 @@ with tab1:
         alloc = phase["alloc"];  advice = phase.get("advice","")
         rec_p = phase.get("rec_prob")
 
-        # ══════════════════════════════════════════════════
-        # V5 全域導航塔（War Room）── 三圓形氣象儀表
-        # ══════════════════════════════════════════════════
-        st.markdown("### 🎯 全域導航塔")
-        _sahm_d  = ind.get("SAHM")  or {}
-        _sloos_d = ind.get("SLOOS") or {}
-        _adl_d   = ind.get("ADL")   or {}
-        _sahm_v  = float(_sahm_d.get("value")  or 0)
-        _sloos_v = float(_sloos_d.get("value") or 0)
-        _adl_v   = float(_adl_d.get("value")   or 0)
-
-        _gg1, _gg2, _gg3 = st.columns(3)
-
-        def _make_gauge(val, title, suffix, rng, thresholds, danger_above=True):
-            """thresholds: [(limit, color_hex), ...] 從低到高"""
-            steps = []
-            prev = rng[0]
-            for lim, col in thresholds:
-                steps.append({"range": [prev, lim], "color": col})
-                prev = lim
-            steps.append({"range": [prev, rng[1]], "color": thresholds[-1][1]})
-            # 指針顏色：超過最後閾值的 limit 為警報色
-            danger_lim = thresholds[-1][0]
-            needle_c = ("#f44336" if (danger_above and val >= danger_lim)
-                        else ("#00c853" if (not danger_above and val <= danger_lim)
-                        else "#ff9800"))
-            f = go.Figure(go.Indicator(
-                mode="gauge+number",
-                value=val,
-                title={"text": title, "font": {"size": 13, "color": "#aaa"}},
-                number={"suffix": suffix, "font": {"size": 22, "color": "#e6edf3"},
-                        "valueformat": ".2f"},
-                gauge={"axis": {"range": rng, "tickcolor": "#444",
-                                "tickfont": {"size": 9, "color": "#666"}},
-                       "bar":  {"color": needle_c, "thickness": 0.25},
-                       "bgcolor": "#161b22",
-                       "bordercolor": "#30363d",
-                       "steps": steps,
-                       "threshold": {"line": {"color": "#f44336", "width": 3},
-                                     "thickness": 0.8, "value": danger_lim}}))
-            f.update_layout(paper_bgcolor="#0e1117", font_color="#e6edf3",
-                            height=200, margin=dict(t=40, b=5, l=15, r=15))
-            return f
-
-        with _gg1:
-            st.plotly_chart(_make_gauge(
-                _sahm_v, "薩姆規則<br>衰退機率", "pp", [0, 1.0],
-                [(0.3, "#0a2a0a"), (0.5, "#2a1f00"), (1.0, "#2a0a0a")],
-                danger_above=True), use_container_width=True)
-            _sahm_sig = ("🔴 **衰退觸發** ≥0.5" if _sahm_v >= 0.5
-                         else "🟡 警戒區 ≥0.3" if _sahm_v >= 0.3
-                         else "🟢 安全 <0.3")
-            st.markdown(f"<div style='text-align:center;font-size:12px'>{_sahm_sig}</div>",
-                        unsafe_allow_html=True)
-            if not _sahm_d:
-                st.caption("⚠️ FRED SAHMREALTIME 未取得（API Key 或網路）")
-
-        with _gg2:
-            st.plotly_chart(_make_gauge(
-                _sloos_v, "SLOOS 放貸寬鬆度<br>銀行信貸標準", "%", [-30, 60],
-                [(-5, "#0a2a0a"), (20, "#2a1f00"), (60, "#2a0a0a")],
-                danger_above=True), use_container_width=True)
-            _sloos_sig = ("🔴 **銀行緊縮** >20%" if _sloos_v > 20
-                          else "🟡 中性偏緊 >0%" if _sloos_v > 0
-                          else "🟢 信貸寬鬆 <0%")
-            st.markdown(f"<div style='text-align:center;font-size:12px'>{_sloos_sig}</div>",
-                        unsafe_allow_html=True)
-            if not _sloos_d:
-                st.caption("⚠️ FRED DRTSCILM 未取得")
-
-        with _gg3:
-            # ADL = RSP/SPY 市場寬度 (% MoM change, negative = narrowing breadth = bad)
-            st.plotly_chart(_make_gauge(
-                _adl_v, "市場健康度<br>RSP/SPY 廣度", "%", [-10, 10],
-                [(-5, "#2a0a0a"), (0, "#2a1f00"), (5, "#0a2a0a")],
-                danger_above=False), use_container_width=True)
-            _adl_sig = ("🟢 市場廣度健康" if _adl_v > 2
-                        else "🔴 **廣度收窄** 虛假繁榮" if _adl_v < -2
-                        else "🟡 市場廣度持平")
-            st.markdown(f"<div style='text-align:center;font-size:12px'>{_adl_sig}</div>",
-                        unsafe_allow_html=True)
-
-        # ── 持倉紅綠燈列表（War Room Middle）──────────────────────────
-        _pf_all = st.session_state.get("portfolio_funds", [])
-        _pf_loaded = [f for f in _pf_all if f.get("loaded")]
-        if _pf_loaded:
-            st.markdown("#### 🚦 持倉紅綠燈")
-            _tl_html = ""
-            for _pf in _pf_loaded:
-                _pf_code  = _pf.get("code","?")
-                _pf_name  = _pf.get("fund_name") or _pf_code
-                _pf_m     = _pf.get("metrics") or _pf.get("m") or {}
-                _pf_divs  = _pf.get("dividends") or []
-                _pf_nav   = float(_pf_m.get("nav") or 0)
-                _pf_buy2  = float(_pf_m.get("buy2") or 0)
-                _pf_ret1y = float(_pf_m.get("ret_1y") or 0)
-                _pf_adr   = float(_pf_m.get("annual_div_rate") or 0)
-                _pf_core  = "🛡️ 核" if _pf.get("is_core") else "⚡ 衛"
-                # 燈號判定
-                _tl_icon, _tl_bg, _tl_bc, _tl_reason = "🟢", "#061a06", "#00c853", "淨值穩定，含息報酬正常"
-                if _pf_adr > 0 and _pf_ret1y < _pf_adr:
-                    _tl_icon, _tl_bg, _tl_bc = "🔴", "#1a0606", "#f44336"
-                    _tl_reason = f"吃本金警示：含息報酬 {_pf_ret1y:.1f}% < 配息率 {_pf_adr:.1f}%"
-                elif _pf_buy2 > 0 and _pf_nav > 0 and _pf_nav <= _pf_buy2:
-                    _tl_icon, _tl_bg, _tl_bc = "🟡", "#1a1500", "#ff9800"
-                    _tl_reason = f"觸碰布林下軌 NAV({_pf_nav:.4f}) ≤ -2σ({_pf_buy2:.4f})"
-                elif not _pf_m:
-                    _tl_icon, _tl_bg, _tl_bc = "⬜", "#161b22", "#555"
-                    _tl_reason = "資料尚未載入"
-                _tl_html += (
-                    f"<div style='background:{_tl_bg};border:1px solid {_tl_bc};"
-                    f"border-radius:8px;padding:8px 14px;margin:4px 0;"
-                    f"display:flex;align-items:center;gap:14px'>"
-                    f"<span style='font-size:20px'>{_tl_icon}</span>"
-                    f"<span style='color:#64b5f6;font-size:11px;width:32px'>{_pf_core}</span>"
-                    f"<span style='color:#ccc;font-size:12px;flex:1'>"
-                    f"<b>{_pf_name[:20]}</b></span>"
-                    f"<span style='color:{_tl_bc};font-size:11px'>{_tl_reason}</span>"
-                    f"</div>"
-                )
-            st.markdown(_tl_html, unsafe_allow_html=True)
+        # ══ L3 60/40 雙欄佈局（戰情室 × Z-Score 矩陣）══════════════
+        if _show_l3:
+            _col_l3, _col_r3 = st.columns([3, 2])
+            _main_ctx = _col_l3
         else:
-            st.markdown(
-                "<div style='background:#161b22;border:1px solid #30363d;border-radius:8px;"
-                "padding:10px 16px;color:#555;font-size:12px;text-align:center'>"
-                "🚦 持倉紅綠燈：請先至「📊 組合基金」Tab 新增並載入基金，即可在此顯示即時燈號</div>",
-                unsafe_allow_html=True)
+            import contextlib as _ctxlib
+            _main_ctx = _ctxlib.nullcontext()
 
-        # ── AI 每日一句結論（War Room Bottom）──────────────────────────
-        st.markdown("#### 🤖 AI 每日一句")
-        _wr_ai_key = "war_room_ai_sentence"
-        if GEMINI_KEY:
-            if st.button("⚡ 生成今日一句結論", key="btn_war_room_ai"):
-                _wr_ctx = (
-                    f"今日日期：2026-04-16。景氣位階：{ph}（評分{sc}/10）。"
-                    f"薩姆規則：{_sahm_v:.2f}pp（{'已觸發衰退' if _sahm_v>=0.5 else '安全'}）。"
-                    f"SLOOS 銀行放貸：{_sloos_v:.1f}%（{'緊縮' if _sloos_v>20 else '寬鬆' if _sloos_v<0 else '中性'}）。"
-                    f"市場廣度RSP/SPY：{_adl_v:.2f}%。HY信用利差：{float((ind.get('HY_SPREAD') or {}).get('value') or 0):.2f}%。"
-                    f"VIX：{float((ind.get('VIX') or {}).get('value') or 0):.1f}。"
-                    f"你是基金投資AI顧問。請用繁體中文給出一句最直接的行動結論（30字以內），"
-                    f"格式：「今日[天氣比喻]，[新手操作]，[老手操作]。」不要廢話。"
-                )
-                try:
-                    from ai_engine import _gemini
-                    _wr_ai = _gemini(GEMINI_KEY, _wr_ctx, max_tokens=80)
-                    st.session_state[_wr_ai_key] = _wr_ai
-                except Exception as _ae:
-                    st.session_state[_wr_ai_key] = f"AI 生成失敗：{_ae}"
-        if st.session_state.get(_wr_ai_key):
+        with _main_ctx:
+            # ══════════════════════════════════════════════════
+            # V5 全域導航塔（War Room）── 三圓形氣象儀表
+            # ══════════════════════════════════════════════════
+            st.markdown("### 🎯 全域導航塔")
+            _sahm_d  = ind.get("SAHM")  or {}
+            _sloos_d = ind.get("SLOOS") or {}
+            _adl_d   = ind.get("ADL")   or {}
+            _sahm_v  = float(_sahm_d.get("value")  or 0)
+            _sloos_v = float(_sloos_d.get("value") or 0)
+            _adl_v   = float(_adl_d.get("value")   or 0)
+
+            _gg1, _gg2, _gg3 = st.columns(3)
+
+            def _make_gauge(val, title, suffix, rng, thresholds, danger_above=True):
+                """thresholds: [(limit, color_hex), ...] 從低到高"""
+                steps = []
+                prev = rng[0]
+                for lim, col in thresholds:
+                    steps.append({"range": [prev, lim], "color": col})
+                    prev = lim
+                steps.append({"range": [prev, rng[1]], "color": thresholds[-1][1]})
+                # 指針顏色：超過最後閾值的 limit 為警報色
+                danger_lim = thresholds[-1][0]
+                needle_c = ("#f44336" if (danger_above and val >= danger_lim)
+                            else ("#00c853" if (not danger_above and val <= danger_lim)
+                            else "#ff9800"))
+                f = go.Figure(go.Indicator(
+                    mode="gauge+number",
+                    value=val,
+                    title={"text": title, "font": {"size": 13, "color": "#aaa"}},
+                    number={"suffix": suffix, "font": {"size": 22, "color": "#e6edf3"},
+                            "valueformat": ".2f"},
+                    gauge={"axis": {"range": rng, "tickcolor": "#444",
+                                    "tickfont": {"size": 9, "color": "#666"}},
+                           "bar":  {"color": needle_c, "thickness": 0.25},
+                           "bgcolor": "#161b22",
+                           "bordercolor": "#30363d",
+                           "steps": steps,
+                           "threshold": {"line": {"color": "#f44336", "width": 3},
+                                         "thickness": 0.8, "value": danger_lim}}))
+                f.update_layout(paper_bgcolor="#0e1117", font_color="#e6edf3",
+                                height=200, margin=dict(t=40, b=5, l=15, r=15))
+                return f
+
+            with _gg1:
+                st.plotly_chart(_make_gauge(
+                    _sahm_v, "薩姆規則<br>衰退機率", "pp", [0, 1.0],
+                    [(0.3, "#0a2a0a"), (0.5, "#2a1f00"), (1.0, "#2a0a0a")],
+                    danger_above=True), use_container_width=True)
+                _sahm_sig = ("🔴 **衰退觸發** ≥0.5" if _sahm_v >= 0.5
+                             else "🟡 警戒區 ≥0.3" if _sahm_v >= 0.3
+                             else "🟢 安全 <0.3")
+                st.markdown(f"<div style='text-align:center;font-size:12px'>{_sahm_sig}</div>",
+                            unsafe_allow_html=True)
+                if not _sahm_d:
+                    st.caption("⚠️ FRED SAHMREALTIME 未取得（API Key 或網路）")
+
+            with _gg2:
+                st.plotly_chart(_make_gauge(
+                    _sloos_v, "SLOOS 放貸寬鬆度<br>銀行信貸標準", "%", [-30, 60],
+                    [(-5, "#0a2a0a"), (20, "#2a1f00"), (60, "#2a0a0a")],
+                    danger_above=True), use_container_width=True)
+                _sloos_sig = ("🔴 **銀行緊縮** >20%" if _sloos_v > 20
+                              else "🟡 中性偏緊 >0%" if _sloos_v > 0
+                              else "🟢 信貸寬鬆 <0%")
+                st.markdown(f"<div style='text-align:center;font-size:12px'>{_sloos_sig}</div>",
+                            unsafe_allow_html=True)
+                if not _sloos_d:
+                    st.caption("⚠️ FRED DRTSCILM 未取得")
+
+            with _gg3:
+                # ADL = RSP/SPY 市場寬度 (% MoM change, negative = narrowing breadth = bad)
+                st.plotly_chart(_make_gauge(
+                    _adl_v, "市場健康度<br>RSP/SPY 廣度", "%", [-10, 10],
+                    [(-5, "#2a0a0a"), (0, "#2a1f00"), (5, "#0a2a0a")],
+                    danger_above=False), use_container_width=True)
+                _adl_sig = ("🟢 市場廣度健康" if _adl_v > 2
+                            else "🔴 **廣度收窄** 虛假繁榮" if _adl_v < -2
+                            else "🟡 市場廣度持平")
+                st.markdown(f"<div style='text-align:center;font-size:12px'>{_adl_sig}</div>",
+                            unsafe_allow_html=True)
+
+            # ── 持倉紅綠燈列表（War Room Middle）──────────────────────────
+            _pf_all = st.session_state.get("portfolio_funds", [])
+            _pf_loaded = [f for f in _pf_all if f.get("loaded")]
+            if _pf_loaded:
+                st.markdown("#### 🚦 持倉紅綠燈")
+                _tl_html = ""
+                for _pf in _pf_loaded:
+                    _pf_code  = _pf.get("code","?")
+                    _pf_name  = _pf.get("fund_name") or _pf_code
+                    _pf_m     = _pf.get("metrics") or _pf.get("m") or {}
+                    _pf_divs  = _pf.get("dividends") or []
+                    _pf_nav   = float(_pf_m.get("nav") or 0)
+                    _pf_buy2  = float(_pf_m.get("buy2") or 0)
+                    _pf_ret1y = float(_pf_m.get("ret_1y") or 0)
+                    _pf_adr   = float(_pf_m.get("annual_div_rate") or 0)
+                    _pf_core  = "🛡️ 核" if _pf.get("is_core") else "⚡ 衛"
+                    # 燈號判定
+                    _tl_icon, _tl_bg, _tl_bc, _tl_reason = "🟢", "#061a06", "#00c853", "淨值穩定，含息報酬正常"
+                    if _pf_adr > 0 and _pf_ret1y < _pf_adr:
+                        _tl_icon, _tl_bg, _tl_bc = "🔴", "#1a0606", "#f44336"
+                        _tl_reason = f"吃本金警示：含息報酬 {_pf_ret1y:.1f}% < 配息率 {_pf_adr:.1f}%"
+                    elif _pf_buy2 > 0 and _pf_nav > 0 and _pf_nav <= _pf_buy2:
+                        _tl_icon, _tl_bg, _tl_bc = "🟡", "#1a1500", "#ff9800"
+                        _tl_reason = f"觸碰布林下軌 NAV({_pf_nav:.4f}) ≤ -2σ({_pf_buy2:.4f})"
+                    elif not _pf_m:
+                        _tl_icon, _tl_bg, _tl_bc = "⬜", "#161b22", "#555"
+                        _tl_reason = "資料尚未載入"
+                    _tl_html += (
+                        f"<div style='background:{_tl_bg};border:1px solid {_tl_bc};"
+                        f"border-radius:8px;padding:8px 14px;margin:4px 0;"
+                        f"display:flex;align-items:center;gap:14px'>"
+                        f"<span style='font-size:20px'>{_tl_icon}</span>"
+                        f"<span style='color:#64b5f6;font-size:11px;width:32px'>{_pf_core}</span>"
+                        f"<span style='color:#ccc;font-size:12px;flex:1'>"
+                        f"<b>{_pf_name[:20]}</b></span>"
+                        f"<span style='color:{_tl_bc};font-size:11px'>{_tl_reason}</span>"
+                        f"</div>"
+                    )
+                st.markdown(_tl_html, unsafe_allow_html=True)
+            else:
+                st.markdown(
+                    "<div style='background:#161b22;border:1px solid #30363d;border-radius:8px;"
+                    "padding:10px 16px;color:#555;font-size:12px;text-align:center'>"
+                    "🚦 持倉紅綠燈：請先至「📊 組合基金」Tab 新增並載入基金，即可在此顯示即時燈號</div>",
+                    unsafe_allow_html=True)
+
+            # ── AI 每日一句結論（War Room Bottom）──────────────────────────
+            st.markdown("#### 🤖 AI 每日一句")
+            _wr_ai_key = "war_room_ai_sentence"
+            if GEMINI_KEY:
+                if st.button("⚡ 生成今日一句結論", key="btn_war_room_ai"):
+                    _wr_ctx = (
+                        f"今日日期：2026-04-16。景氣位階：{ph}（評分{sc}/10）。"
+                        f"薩姆規則：{_sahm_v:.2f}pp（{'已觸發衰退' if _sahm_v>=0.5 else '安全'}）。"
+                        f"SLOOS 銀行放貸：{_sloos_v:.1f}%（{'緊縮' if _sloos_v>20 else '寬鬆' if _sloos_v<0 else '中性'}）。"
+                        f"市場廣度RSP/SPY：{_adl_v:.2f}%。HY信用利差：{float((ind.get('HY_SPREAD') or {}).get('value') or 0):.2f}%。"
+                        f"VIX：{float((ind.get('VIX') or {}).get('value') or 0):.1f}。"
+                        f"你是基金投資AI顧問。請用繁體中文給出一句最直接的行動結論（30字以內），"
+                        f"格式：「今日[天氣比喻]，[新手操作]，[老手操作]。」不要廢話。"
+                    )
+                    try:
+                        from ai_engine import _gemini
+                        _wr_ai = _gemini(GEMINI_KEY, _wr_ctx, max_tokens=80)
+                        st.session_state[_wr_ai_key] = _wr_ai
+                    except Exception as _ae:
+                        st.session_state[_wr_ai_key] = f"AI 生成失敗：{_ae}"
+            if st.session_state.get(_wr_ai_key):
+                st.markdown(
+                    f"<div style='background:linear-gradient(135deg,#0d1b2a,#1a2332);"
+                    f"border:1px solid #58a6ff;border-radius:10px;padding:14px 20px;"
+                    f"font-size:15px;color:#e6edf3;margin:6px 0'>"
+                    f"💬 {st.session_state[_wr_ai_key]}</div>",
+                    unsafe_allow_html=True)
+            st.divider()
+
+            # ══════════════════════════════════════════════════
+            # L1 新手待辦清單（所有等級均顯示）
+            # ══════════════════════════════════════════════════
+            _w_icon2  = phase.get("weather_icon", "⛅")
+            _w_label2 = phase.get("weather_label", "多雲")
+            _l1_stock = alloc.get("股票", 50)
+            _l1_bond  = alloc.get("債券", 30)
+            _l1_cash  = alloc.get("現金", 20)
+            _l1_checks = [
+                f"確認核心部位是否符合 AI 建議：股 {_l1_stock}% / 債 {_l1_bond}% / 現金 {_l1_cash}%",
+            ]
+            if _sahm_v >= 0.5:
+                _l1_checks.append(f"⚠️ **薩姆衰退警報已觸發**（{_sahm_v:.2f}pp）：暫停衛星加碼，保留防守型部位")
+            if _sloos_v > 20:
+                _l1_checks.append(f"📊 **銀行緊縮偵測**（SLOOS {_sloos_v:.1f}%）：高收益債基金降至 10% 以下")
+            if _adl_v < -2:
+                _l1_checks.append(f"🌍 **市場廣度警示**（RSP/SPY {_adl_v:.2f}%）：減少主題/集中型基金")
+            _l1_checks.append("定期定額不停扣（除非景氣位階進入「高峰」且 VIX < 15）")
+            _l1_checks.append(f"本週核心原則：景氣「{ph}」，{(advice or '均衡配置，嚴守紀律')[:40]}。")
+            _l1_md = "\n".join(f"- [ ] {c}" for c in _l1_checks)
             st.markdown(
-                f"<div style='background:linear-gradient(135deg,#0d1b2a,#1a2332);"
-                f"border:1px solid #58a6ff;border-radius:10px;padding:14px 20px;"
-                f"font-size:15px;color:#e6edf3;margin:6px 0'>"
-                f"💬 {st.session_state[_wr_ai_key]}</div>",
+                f"<div style='background:#0d1117;border:1px solid #30363d;border-radius:12px;"
+                f"padding:16px 20px;margin:8px 0'>"
+                f"<div style='color:#e6edf3;font-weight:700;margin-bottom:10px'>"
+                f"📋 本週操作清單（{_w_label2} {_w_icon2}）</div></div>",
                 unsafe_allow_html=True)
-        st.divider()
+            st.markdown(_l1_md)
 
         # ══════════════════════════════════════════════════
-        # L1 新手待辦清單（所有等級均顯示）
+        # L3 指標 Z-Score 矩陣（14 指標）— L3 only
         # ══════════════════════════════════════════════════
-        _w_icon2  = phase.get("weather_icon", "⛅")
-        _w_label2 = phase.get("weather_label", "多雲")
-        _l1_stock = alloc.get("股票", 50)
-        _l1_bond  = alloc.get("債券", 30)
-        _l1_cash  = alloc.get("現金", 20)
-        _l1_checks = [
-            f"確認核心部位是否符合 AI 建議：股 {_l1_stock}% / 債 {_l1_bond}% / 現金 {_l1_cash}%",
-        ]
-        if _sahm_v >= 0.5:
-            _l1_checks.append(f"⚠️ **薩姆衰退警報已觸發**（{_sahm_v:.2f}pp）：暫停衛星加碼，保留防守型部位")
-        if _sloos_v > 20:
-            _l1_checks.append(f"📊 **銀行緊縮偵測**（SLOOS {_sloos_v:.1f}%）：高收益債基金降至 10% 以下")
-        if _adl_v < -2:
-            _l1_checks.append(f"🌍 **市場廣度警示**（RSP/SPY {_adl_v:.2f}%）：減少主題/集中型基金")
-        _l1_checks.append("定期定額不停扣（除非景氣位階進入「高峰」且 VIX < 15）")
-        _l1_checks.append(f"本週核心原則：景氣「{ph}」，{(advice or '均衡配置，嚴守紀律')[:40]}。")
-        _l1_md = "\n".join(f"- [ ] {c}" for c in _l1_checks)
-        st.markdown(
-            f"<div style='background:#0d1117;border:1px solid #30363d;border-radius:12px;"
-            f"padding:16px 20px;margin:8px 0'>"
-            f"<div style='color:#e6edf3;font-weight:700;margin-bottom:10px'>"
-            f"📋 本週操作清單（{_w_label2} {_w_icon2}）</div></div>",
-            unsafe_allow_html=True)
-        st.markdown(_l1_md)
+        if _show_l3:
+            with _col_r3:
+                st.markdown("**🔬 Z-Score 矩陣（14 指標）**")
+                import pandas as _pd_zs
+                _zs_indicators = [
+                    ("SAHM",         "薩姆規則",         "pp",  2,  True),
+                    ("SLOOS",        "SLOOS 放貸標準",    "%",   1,  True),
+                    ("ADL",          "RSP/SPY 廣度",      "%",   2,  False),
+                    ("PMI",          "ISM PMI",           "",    1,  False),
+                    ("YIELD_10Y2Y",  "殖利率利差 10Y-2Y", "%",   3,  False),
+                    ("HY_SPREAD",    "高收益債利差",       "%",   2,  True),
+                    ("VIX",          "VIX 恐慌指數",       "",    1,  True),
+                    ("CPI",          "CPI 通膨率",         "%",   1,  True),
+                    ("FED_RATE",     "聯準會利率",          "%",   2,  True),
+                    ("UNEMPLOYMENT", "失業率",              "%",   1,  True),
+                    ("COPPER",       "銅博士月漲跌",        "%",   1,  False),
+                    ("CONSUMER_CONF","消費者信心",          "",    1,  False),
+                    ("JOBLESS",      "初領失業金",          "萬",  0,  True),
+                    ("M2",           "M2 YoY",              "%",   1,  False),
+                ]
+                _zs_rows = []
+                for _zk, _zname, _zunit, _zdec, _zhigh_bad in _zs_indicators:
+                    _zd = ind.get(_zk) or {}
+                    _zv = _zd.get("value")
+                    _zs_raw = _zd.get("series")
+                    if _zv is None:
+                        _zs_rows.append({"指標": _zname, "當前值": "—", "Z": "—", "狀態": "⬜"})
+                        continue
+                    _zv_f = float(_zv)
+                    _z_score = None
+                    if _zs_raw is not None:
+                        try:
+                            _zser = (_zs_raw if isinstance(_zs_raw, _pd_zs.Series)
+                                     else _pd_zs.Series(_zs_raw)).dropna()
+                            if len(_zser) >= 10:
+                                _zmu, _zsig = float(_zser.mean()), float(_zser.std())
+                                if _zsig > 0:
+                                    _z_score = (_zv_f - _zmu) / _zsig
+                        except Exception:
+                            pass
+                    _unit_s = f" {_zunit}" if _zunit else ""
+                    _val_s  = f"{_zv_f:.{_zdec}f}{_unit_s}"
+                    _z_s    = f"{_z_score:+.2f}" if _z_score is not None else "—"
+                    if _z_score is not None and abs(_z_score) >= 2:
+                        _is_bad = (_zhigh_bad and _z_score > 0) or (not _zhigh_bad and _z_score < 0)
+                        _stat = "🔴 ⚠️ 歷史極端值" if _is_bad else "🟢 ⚠️ 歷史極端值"
+                    elif _z_score is not None and abs(_z_score) >= 1.5:
+                        _stat = "🟡 偏離"
+                    elif _z_score is not None:
+                        _stat = "🟢 正常"
+                    else:
+                        _stat = "⬜ 資料不足"
+                    _zs_rows.append({"指標": _zname, "當前值": _val_s, "Z": _z_s, "狀態": _stat})
+                if _zs_rows:
+                    _zs_df = _pd_zs.DataFrame(_zs_rows)
+                    st.dataframe(_zs_df, use_container_width=True, hide_index=True,
+                                 column_config={
+                                     "指標": st.column_config.TextColumn(width="medium"),
+                                     "當前值": st.column_config.TextColumn(width="small"),
+                                     "Z": st.column_config.TextColumn(width="small"),
+                                     "狀態": st.column_config.TextColumn(width="medium"),
+                                 })
+                    st.caption("|Z| ≥ 2 = 歷史極端值（95%分位）｜|Z| ≥ 1.5 = 偏離警示")
+
+        # ══════════════════════════════════════════════════
+        # L3 情境判斷卡（Logic A / B）— L3 only
+        # ══════════════════════════════════════════════════
+        if _show_l3:
+            _pmi_v = float((ind.get("PMI") or {}).get("value") or 0)
+            _l3_sit_cards = []
+            if _pmi_v > 0 and _pmi_v < 50 and _sahm_v < 0.5:
+                _l3_sit_cards.append({
+                    "icon": "🟡", "border": "#ff9800", "bg": "#1a1200",
+                    "title": "【Situation A — 庫存調整，非衰退】",
+                    "body": (f"PMI={_pmi_v:.1f}（<50 收縮）但薩姆規則={_sahm_v:.2f}（<0.5 安全線）。"
+                             f"製造業庫存去化壓力，消費端仍撐盤，非系統性衰退訊號。"
+                             f"策略：維持衛星資產比重，等待 PMI 觸底回升確認後加碼。"),
+                })
+            if _adl_v < -2:
+                _l3_sit_cards.append({
+                    "icon": "🔴", "border": "#f44336", "bg": "#1a0606",
+                    "title": "【Situation B — 極端乖離警報】",
+                    "body": (f"RSP/SPY 市場廣度={_adl_v:.2f}%（< -2% 危險線）。"
+                             f"大型權值股虛假拉抬，等權重指數嚴重落後。"
+                             f"策略：啟動衛星部位分批停利，降低集中型/主題型基金配置。"),
+                })
+            if _l3_sit_cards:
+                st.markdown("##### 🧭 L3 情境判斷")
+                for _sc in _l3_sit_cards:
+                    st.markdown(
+                        f"<div style='background:{_sc['bg']};border-left:4px solid {_sc['border']};" \
+                        f"border-radius:0 10px 10px 0;padding:12px 16px;margin:6px 0'>"
+                        f"<span style='font-size:16px'>{_sc['icon']}</span> "
+                        f"<b style='color:#e6edf3'>{_sc['title']}</b><br>"
+                        f"<span style='color:#ccc;font-size:13px'>{_sc['body']}</span></div>",
+                        unsafe_allow_html=True)
+
 
         # ══════════════════════════════════════════════════
         # L2 歷史危機對照圖（L2 + L3 顯示）
@@ -955,6 +1065,47 @@ with tab1:
                     })
                 if _rows:
                     st.dataframe(pd.DataFrame(_rows), use_container_width=True, hide_index=True)
+
+        # ══════════════════════════════════════════════════
+        # L3 資本防線 — 含息報酬 vs 配息率（Bar Chart）
+        # ══════════════════════════════════════════════════
+        if _show_l3:
+            _pf_def = [f for f in st.session_state.get("portfolio_funds", []) if f.get("loaded")]
+            if _pf_def:
+                st.markdown("#### 💰 資本防線 — 含息報酬 vs 配息率")
+                _def_names = [f.get("fund_name") or f.get("code","?") for f in _pf_def]
+                _def_tr1y  = [float((f.get("metrics") or f.get("m") or {}).get("ret_1y") or 0) for f in _pf_def]
+                _def_adr   = [float((f.get("metrics") or f.get("m") or {}).get("annual_div_rate") or 0) for f in _pf_def]
+                _def_colors = ["#f44336" if tr < adr else "#00c853"
+                               for tr, adr in zip(_def_tr1y, _def_adr)]
+                _def_fig = go.Figure()
+                _def_fig.add_trace(go.Bar(
+                    x=_def_names, y=_def_tr1y,
+                    marker_color=_def_colors,
+                    text=[f"{v:.1f}%" for v in _def_tr1y],
+                    textposition="outside",
+                    name="含息報酬率 TR1Y",
+                    customdata=list(zip(_def_adr, ["🚨 本金侵蝕" if tr < adr else "" for tr, adr in zip(_def_tr1y, _def_adr)])),
+                    hovertemplate="<b>%{x}</b><br>TR1Y: %{y:.1f}%<br>配息率: %{customdata[0]:.1f}%<br>%{customdata[1]}<extra></extra>",
+                ))
+                _def_fig.add_trace(go.Scatter(
+                    x=_def_names, y=_def_adr,
+                    mode="markers",
+                    marker=dict(symbol="line-ew", size=16, color="#ff9800",
+                                line=dict(width=3, color="#ff9800")),
+                    name="配息年化率",
+                    hovertemplate="配息率: %{y:.1f}%<extra></extra>",
+                ))
+                _def_fig.update_layout(
+                    paper_bgcolor="#0e1117", plot_bgcolor="#161b22",
+                    font_color="#e6edf3", height=260,
+                    margin=dict(t=20, b=50, l=10, r=10),
+                    legend=dict(orientation="h", y=-0.35),
+                    xaxis=dict(tickfont=dict(size=11)),
+                    yaxis=dict(title="報酬率 (%)", ticksuffix="%"),
+                )
+                st.plotly_chart(_def_fig, use_container_width=True)
+                st.caption("🟢 綠色 = TR1Y > 配息率（配息有保障）｜🔴 紅色 = TR1Y < 配息率（本金侵蝕警示）｜橙色橫線 = 配息年化率")
 
         # ── 市場新聞（折疊）── L3 only
         if _show_l3:
