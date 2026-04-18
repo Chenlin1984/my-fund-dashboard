@@ -1,12 +1,30 @@
 # 專案戰情室 (Project State)
-> _最後更新：2026-04-16_
+> _最後更新：2026-04-18_
 
 ## 📌 當前狀態
-- **環境**: Streamlit Cloud + GitHub（branch: `main` + `claude/system-detox-upgrade-ra7Tp`）
-- **進度**: ✅ V5 視覺化導航 + Bug Fix + 境內/境外 切換 **全部完成**
-- **工作分支**: `claude/system-detox-upgrade-ra7Tp`（最新開發分支）
-- **app.py**: 2854 行，6 tabs，AST OK
+- **環境**: Streamlit Cloud + GitHub
+- **進度**: ✅ V6.0 Pro 三件套 **完成並推送**
+- **工作分支**: `claude/system-detox-upgrade-ra7Tp`（commit 9370775）
+- **app.py**: 3141 行，6 tabs，AST OK
 - **precision_engine.py**: 347 行
+
+---
+
+## ✅ V6.0 Pro（2026-04-18 完成）
+
+| 步驟 | 內容 | Commit | 狀態 |
+|------|------|--------|------|
+| V6-1 | Tab1 L3 60/40 雙欄佈局 — `with _main_ctx:` + `_col_l3/_col_r3` | 9370775 | ✅ |
+| V6-2 | L3 Z-Score 矩陣（14 指標 × Z-Score，\|Z\|≥2 = ⚠️ 歷史極端值） | 9370775 | ✅ |
+| V6-3 | L3 情境判斷卡 A/B（PMI+薩姆 / ADL 觸發） | 9370775 | ✅ |
+| V6-4 | L3 資本防線圖（go.Bar TR1Y vs 配息率，🔴本金侵蝕警示） | 9370775 | ✅ |
+
+### V6.0 架構說明
+- **60/40 佈局**: L3 時 `st.columns([3,2])` → `_main_ctx=_col_l3`（War Room+清單），`_col_r3`（Z-Score矩陣）
+- **Z-Score 矩陣**: 14 指標 × (當前值, Z-Score, 狀態)；Z = (值-均值)/標準差；|Z|≥2 = 極端值
+- **Situation A**: PMI<50 且 Sahm<0.5 → 庫存調整非衰退（黃色卡）
+- **Situation B**: ADL < -2% → 極端乖離警報（紅色卡）
+- **資本防線**: 有 portfolio_funds 時顯示，紅柱 = TR1Y < 配息率
 
 ---
 
@@ -100,6 +118,7 @@
 ## 📋 Commit 歷史（關鍵）
 | Commit | 內容 |
 |--------|------|
+| 9370775 | feat(V6.0): Pro 三件套 — 60/40雙欄+Z-Score矩陣+情境卡+資本防線圖 |
 | cdf707f | UX: Tab2 境內/境外 radio + _build_moneydj_url() |
 | 3c0035e | Fix: classify_fetch_status v13.6 + partial data view |
 | a761469 | V5: 視覺化導航 v3.0 全域導航塔 + Data Guard |
