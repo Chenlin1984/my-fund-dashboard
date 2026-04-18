@@ -1,12 +1,30 @@
 # 專案戰情室 (Project State)
-> _最後更新：2026-04-17_
+> _最後更新：2026-04-18_
 
 ## 📌 當前狀態
-- **環境**: Streamlit Cloud + GitHub（branch: `main`）
-- **進度**: ✅ Core Protocol V5.0 Master Edition **全部完成並 Merge**
-- **工作分支**: `main`（PR #38 已 merge）
-- **app.py**: 2987 行，6 tabs，AST OK
+- **環境**: Streamlit Cloud + GitHub
+- **進度**: ✅ V6.0 Pro 三件套 **完成並推送**
+- **工作分支**: `claude/system-detox-upgrade-ra7Tp`（commit 9370775）
+- **app.py**: 3141 行，6 tabs，AST OK
 - **precision_engine.py**: 347 行
+
+---
+
+## ✅ V6.0 Pro（2026-04-18 完成）
+
+| 步驟 | 內容 | Commit | 狀態 |
+|------|------|--------|------|
+| V6-1 | Tab1 L3 60/40 雙欄佈局 — `with _main_ctx:` + `_col_l3/_col_r3` | 9370775 | ✅ |
+| V6-2 | L3 Z-Score 矩陣（14 指標 × Z-Score，\|Z\|≥2 = ⚠️ 歷史極端值） | 9370775 | ✅ |
+| V6-3 | L3 情境判斷卡 A/B（PMI+薩姆 / ADL 觸發） | 9370775 | ✅ |
+| V6-4 | L3 資本防線圖（go.Bar TR1Y vs 配息率，🔴本金侵蝕警示） | 9370775 | ✅ |
+
+### V6.0 架構說明
+- **60/40 佈局**: L3 時 `st.columns([3,2])` → `_main_ctx=_col_l3`（War Room+清單），`_col_r3`（Z-Score矩陣）
+- **Z-Score 矩陣**: 14 指標 × (當前值, Z-Score, 狀態)；Z = (值-均值)/標準差；|Z|≥2 = 極端值
+- **Situation A**: PMI<50 且 Sahm<0.5 → 庫存調整非衰退（黃色卡）
+- **Situation B**: ADL < -2% → 極端乖離警報（紅色卡）
+- **資本防線**: 有 portfolio_funds 時顯示，紅柱 = TR1Y < 配息率
 
 ---
 
@@ -78,7 +96,7 @@
 
 | 檔案 | 說明 | 行數 |
 |------|------|------|
-| `app.py` | 主程式（6 tabs：總經/單一基金/組合基金/回測/資料診斷/說明書） | 2987 |
+| `app.py` | 主程式（6 tabs：總經/單一基金/組合基金/回測/資料診斷/說明書） | 3141 |
 | `precision_engine.py` | V4 精準策略引擎（複合風險溫度計 + 微觀防護盾） | 347 |
 | `macro_engine.py` | 總經引擎（@st.cache_data v18.0）+ SAHM + SLOOS | — |
 | `fund_fetcher.py` | 基金抓取（v6.23）+ DataValidationError + classify_fetch_status v13.6 | — |
@@ -95,9 +113,12 @@
 ## 📋 Commit 歷史（關鍵）
 | Commit | 內容 |
 |--------|------|
+| 9370775 | feat(V6.0): Pro 三件套 — 60/40雙欄+Z-Score矩陣+情境卡+資本防線圖 |
 | 82c9f63 | Merge PR #38 — V5.0 Master Edition |
 | fb2b761 | feat(V5.0): Core Protocol Master Edition |
 | cdf707f | feat: Tab2 境內/境外 Radio |
 | 3c0035e | fix: classify_fetch_status v13.6 |
 | a761469 | feat(V5): 視覺化導航 v3.0 |
 | eda4128 | feat(V4): 精準策略引擎 |
+| 26010c3 | V3-3: Tab2 三項升級 |
+| aa0d55a | V3-2: 美林時鐘卡片 |
