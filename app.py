@@ -59,6 +59,20 @@ def _load_keys():
 
 FRED_KEY, GEMINI_KEY = _load_keys()
 
+
+def _check_secrets():
+    _missing = []
+    if not FRED_KEY:   _missing.append("FRED_API_KEY")
+    if not GEMINI_KEY: _missing.append("GEMINI_API_KEY")
+    if _missing:
+        st.error(
+            f"⚠️ 缺少必要金鑰：{', '.join(_missing)}。"
+            "請至 Streamlit Cloud → Settings → Secrets 新增後重新部署。",
+            icon="🔑",
+        )
+
+_check_secrets()
+
 for _k, _v in {
     "macro_done":False,"indicators":{},"phase_info":{},
     "macro_last_update":None,"macro_ai":"",
@@ -277,20 +291,10 @@ with tab1:
                     st.session_state.systemic_risk_data = None
                     st.warning(f"⚠️ 新聞抓取失敗（不影響指標）：{str(_ne)[:80]}")
 
-    # ── V5.0 漸進式培訓等級選擇器 ────────────────────────────────────
-    _vm_opts = ["🟢 L1 新手導航", "🟡 L2 學徒覆盤", "🔴 L3 老手沙盤"]
-    _vm_saved = st.session_state.get("view_mode", "🔴 L3 老手沙盤")
-    _vm_idx   = _vm_opts.index(_vm_saved) if _vm_saved in _vm_opts else 2
-    _view_mode = st.radio(
-        "📊 視角等級",
-        _vm_opts,
-        index=_vm_idx,
-        horizontal=True,
-        key="view_mode_radio",
-        help="L1：三防線 Gauge + 待辦清單  ｜  L2：+ 歷史危機對照圖  ｜  L3：+ 全 Z-Score 矩陣",
-    )
+    # 固定 L3 老手沙盤（移除 L1/L2 選項）
+    _view_mode = "🔴 L3 老手沙盤"
     st.session_state["view_mode"] = _view_mode
-    _show_l2_plus = _view_mode != "🟢 L1 新手導航"
+    _show_l2_plus = True
     _show_l3      = _view_mode == "🔴 L3 老手沙盤"
 
     if st.session_state.macro_done:
@@ -1610,6 +1614,34 @@ with tab2:
                                 f"<div style='color:#ccc;font-size:11px;margin-top:2px'>{_ds['message']}</div>"
                                 + (f"<div style='color:#ff9800;font-size:10px;margin-top:4px'>{_ds['nav_warning']}</div>" if _ds.get("nav_warning") else "")
                                 + "</div>", unsafe_allow_html=True)
+
+                        # ── 📖 配息覆蓋率講義卡（MK 郭俊宏《以息養股》）──
+                        _cov = float(_tr1y) / float(_adr)
+                        _cov_c = "#00c853" if _cov >= 1.0 else ("#ff9800" if _cov >= 0.8 else "#f44336")
+                        _cov_label = (
+                            "🟢 安全 — 報酬足以支撐配息，無吃本金疑慮" if _cov >= 1.0 else
+                            "🟡 注意 — 輕微侵蝕，需觀察趨勢" if _cov >= 0.8 else
+                            "🔴 警示 — 嚴重吃本金，領息賠價差"
+                        )
+                        st.markdown(
+                            f"<div style='background:#0d1117;border:1px dashed #30363d;"
+                            f"border-radius:10px;padding:10px 14px;margin-top:8px'>"
+                            f"<div style='color:#888;font-size:10px;letter-spacing:1px;margin-bottom:6px'>"
+                            f"📖 配息覆蓋率講義 ── MK 郭俊宏《以息養股》</div>"
+                            f"<div style='color:#aaa;font-size:11px;font-style:italic;"
+                            f"border-left:2px solid #444;padding-left:8px;margin-bottom:8px'>"
+                            f"「高殖利率不等於高報酬，必須確認是否吃本金。」</div>"
+                            f"<div style='font-family:monospace;font-size:12px;color:#e6edf3;margin-bottom:6px'>"
+                            f"Coverage = TR₁Y ÷ 年化配息率<br>"
+                            f"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;"
+                            f"= {_tr1y:.1f}% ÷ {_adr:.2f}%"
+                            f" = <span style='color:{_cov_c};font-weight:700;font-size:14px'>{_cov:.2f}</span></div>"
+                            f"<div style='color:{_cov_c};font-size:12px;font-weight:600;margin-bottom:6px'>"
+                            f"{_cov_label}</div>"
+                            f"<div style='color:#555;font-size:10px'>"
+                            f"Coverage ≥ 1.0 = 安全 ｜ 0.8–1.0 = 注意 ｜ &lt; 0.8 = 高警示</div>"
+                            f"</div>", unsafe_allow_html=True)
+
                     else:
                         st.info("無配息記錄")
 

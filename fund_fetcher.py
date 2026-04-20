@@ -25,7 +25,23 @@ v6.2 修正:
 """
 import requests, re, time
 import urllib3
+from urllib3.util.retry import Retry
+from requests.adapters import HTTPAdapter
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)  # proxy 模式跳 SSL verify 時抑制警告
+
+
+def _make_retry_session() -> requests.Session:
+    """urllib3 指數退避 Session：5xx 自動重試最多 3 次，backoff_factor=0.3（0.3s/0.6s/1.2s）。"""
+    _retry = Retry(
+        total=3,
+        backoff_factor=0.3,
+        status_forcelist=[500, 502, 503, 504],
+        raise_on_status=False,
+    )
+    _s = requests.Session()
+    _s.mount("https://", HTTPAdapter(max_retries=_retry))
+    _s.mount("http://",  HTTPAdapter(max_retries=_retry))
+    return _s
 
 
 class DataValidationError(Exception):
@@ -134,11 +150,12 @@ def fetch_url_with_retry(url, headers=None, params=None,
     _proxy  = _proxies()
     _verify = _ssl_verify()   # proxy 模式跳過 SSL 憑證驗證（Squid CONNECT 相容）
     _proxy_err_count = 0
+    _sess = _make_retry_session()  # [修正: 雲端邊界防禦] urllib3 Retry 5xx backoff_factor=0.3
     for attempt in range(retries):
         try:
-            resp = requests.get(url, headers=_headers,
-                                params=params, timeout=timeout,
-                                proxies=_proxy, verify=_verify)
+            resp = _sess.get(url, headers=_headers,
+                             params=params, timeout=timeout,
+                             proxies=_proxy, verify=_verify)
             # 407 Proxy Auth 失敗 → 立即回報，不重試
             if resp.status_code == 407:
                 print(f"[proxy] 407 Proxy Auth Failed — 請確認 st.secrets[proxy] 帳密正確")
@@ -172,8 +189,8 @@ def fetch_url_with_retry(url, headers=None, params=None,
     if _proxy and _proxy_err_count >= retries:
         print(f"[proxy] Proxy 全數失敗，降級直連嘗試：{url[:80]}")
         try:
-            resp_dc = requests.get(url, headers=_headers, params=params,
-                                   timeout=timeout, proxies={}, verify=True)
+            resp_dc = _sess.get(url, headers=_headers, params=params,
+                                timeout=timeout, proxies={}, verify=True)
             if resp_dc.status_code == 200:
                 if "moneydj.com" in url:
                     resp_dc.encoding = "big5"
