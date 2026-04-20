@@ -291,20 +291,10 @@ with tab1:
                     st.session_state.systemic_risk_data = None
                     st.warning(f"⚠️ 新聞抓取失敗（不影響指標）：{str(_ne)[:80]}")
 
-    # ── V5.0 漸進式培訓等級選擇器 ────────────────────────────────────
-    _vm_opts = ["🟢 L1 新手導航", "🟡 L2 學徒覆盤", "🔴 L3 老手沙盤"]
-    _vm_saved = st.session_state.get("view_mode", "🔴 L3 老手沙盤")
-    _vm_idx   = _vm_opts.index(_vm_saved) if _vm_saved in _vm_opts else 2
-    _view_mode = st.radio(
-        "📊 視角等級",
-        _vm_opts,
-        index=_vm_idx,
-        horizontal=True,
-        key="view_mode_radio",
-        help="L1：三防線 Gauge + 待辦清單  ｜  L2：+ 歷史危機對照圖  ｜  L3：+ 全 Z-Score 矩陣",
-    )
+    # 固定 L3 老手沙盤（移除 L1/L2 選項）
+    _view_mode = "🔴 L3 老手沙盤"
     st.session_state["view_mode"] = _view_mode
-    _show_l2_plus = _view_mode != "🟢 L1 新手導航"
+    _show_l2_plus = True
     _show_l3      = _view_mode == "🔴 L3 老手沙盤"
 
     if st.session_state.macro_done:
