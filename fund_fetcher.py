@@ -2735,44 +2735,9 @@ def _fetch_fund_single(code: str, force_refresh: bool = False,
         data_source="",     # 記錄實際使用的來源
     )
 
-    # ── Step 1: 本地快取（最快，離線也能跑）──────────────────────────
-    if not force_refresh:
-        cached_s = _cache_load_nav(_code)
-        if cached_s is not None and len(cached_s) >= 10:
-            result["series"] = cached_s
-            result["data_source"] = "cache"
-
-        cached_div = _cache_load_div(_code)
-        if cached_div:
-            result["dividends"] = cached_div
-
-        cached_meta = _cache_load_meta(_code)
-        if cached_meta:
-            for k, v in cached_meta.items():
-                if v is not None:
-                    result[k] = v
-
-        # 快取完整 → 直接計算並回傳
-        if (result["series"] is not None and
-                len(result["series"]) >= 10 and
-                result.get("fund_name")):
-            _finish_metrics(result)
-            print(f"[orchestrator] 🚀 {_code} 完整快取命中，直接回傳")
-            return result
-
     # ── Step 2: 並行嘗試多來源（NAV）────────────────────────────────
     nav_s = pd.Series(dtype=float)
     nav_source = ""
-
-    # -1. v6.19: GitHub Actions 每日快取（最優先，完全繞過 IP 封鎖）
-    # cache/nav/{CODE}.json 由 .github/workflows/fetch_nav_cache.yml 每日更新
-    _cache_s = _src_cache_files(_code)
-    if len(_cache_s) >= 5:
-        nav_s = _cache_s
-        nav_source = "github_actions_cache"
-        result.setdefault("source_trace", []).append(
-            {"source": "github_actions_cache", "success": True, "nav_count": len(_cache_s)})
-        print(f"[orchestrator] 📦 {_code} 使用 GitHub Actions 快取 {len(_cache_s)} 筆")
 
     # 0. 安聯投信官網（ACTI/ACCP/ACDD 境內基金首選，Colab 友善）
     # v6.23 fix: 加入 len(nav_s) < 10 防護，避免覆蓋 GitHub Actions 快取資料
@@ -2974,7 +2939,6 @@ def _fetch_fund_single(code: str, force_refresh: bool = False,
         result["data_source"] = nav_source
         result.setdefault("source_trace", []).append(
             {"source": nav_source, "success": True, "nav_count": len(nav_s)})
-        _cache_save_nav(_code, nav_s)
     else:
         result.setdefault("source_trace", []).append(
             {"source": "nav_all", "success": False,
@@ -3029,7 +2993,6 @@ def _fetch_fund_single(code: str, force_refresh: bool = False,
     if meta:
         # v13.5: 用 merge_non_empty，不讓空值覆蓋前面成功的資料
         result = merge_non_empty(result, meta)
-        _cache_save_meta(_code, meta)
 
     # ── Step 4: 配息資料 ───────────────────────────────────────────
     divs = result.get("dividends") or []
@@ -3041,7 +3004,6 @@ def _fetch_fund_single(code: str, force_refresh: bool = False,
         divs = _src_cnyes_div(_code)
     if divs:
         result["dividends"] = divs
-        _cache_save_div(_code, divs)
         latest_yield = divs[0].get("yield_pct", 0)
         if latest_yield > 0:
             result["moneydj_div_yield"] = round(latest_yield, 2)
