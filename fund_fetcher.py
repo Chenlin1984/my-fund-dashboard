@@ -52,6 +52,14 @@ class DataValidationError(Exception):
 # NAS Proxy 設定（讀取 st.secrets，缺失時降級直連）
 # ══════════════════════════════════════════════════════════════════
 _PROXY_CFG_CACHE = None   # None=未初始化；{}=已嘗試但不可用
+_PROXY_CFG_TS    = 0.0    # 上次讀取時間戳（TTL 300s，防止 NAS 回復後仍用舊 None）
+_PROXY_CFG_TTL   = 300    # 秒
+
+def reset_proxy_cache():
+    """手動清除 Proxy 快取，下次請求時重新讀取 st.secrets。"""
+    global _PROXY_CFG_CACHE, _PROXY_CFG_TS
+    _PROXY_CFG_CACHE = None
+    _PROXY_CFG_TS    = 0.0
 
 
 def get_proxy_config():
@@ -63,8 +71,10 @@ def get_proxy_config():
     - 缺失 / 任何例外 → 回傳 None（降級直連）
     結果快取於模組層級，同一程序內只讀一次。
     """
-    global _PROXY_CFG_CACHE
-    if _PROXY_CFG_CACHE is not None:
+    global _PROXY_CFG_CACHE, _PROXY_CFG_TS
+    import time as _t_proxy
+    # TTL 快取：300s 內重用，過期後重新讀取（允許 NAS 恢復後自動生效）
+    if _PROXY_CFG_CACHE is not None and (_t_proxy.time() - _PROXY_CFG_TS) < _PROXY_CFG_TTL:
         return _PROXY_CFG_CACHE if _PROXY_CFG_CACHE else None
     try:
         import streamlit as _st
@@ -78,6 +88,7 @@ def get_proxy_config():
         _PROXY_CFG_CACHE = {"http": _url, "https": _url}
     except Exception:
         _PROXY_CFG_CACHE = {}   # 已嘗試，不可用
+    _PROXY_CFG_TS = _t_proxy.time()
     return _PROXY_CFG_CACHE if _PROXY_CFG_CACHE else None
 
 
@@ -150,6 +161,7 @@ def fetch_url_with_retry(url, headers=None, params=None,
     _proxy  = _proxies()
     _verify = _ssl_verify()   # proxy 模式跳過 SSL 憑證驗證（Squid CONNECT 相容）
     _proxy_err_count = 0
+    _block_count     = 0   # 403 連續計數
     _sess = _make_retry_session()  # [修正: 雲端邊界防禦] urllib3 Retry 5xx backoff_factor=0.3
     for attempt in range(retries):
         try:
@@ -160,16 +172,18 @@ def fetch_url_with_retry(url, headers=None, params=None,
             if resp.status_code == 407:
                 print(f"[proxy] 407 Proxy Auth Failed — 請確認 st.secrets[proxy] 帳密正確")
                 return None
-            # 403 Target Blocked → 隨機延遲後重試
+            # 403 Target Blocked → 計數 + 隨機延遲；連續 2 次直接跳出試直連
             if resp.status_code == 403:
+                _block_count += 1
                 import random as _rnd
                 _delay = _rnd.uniform(2.5, 6.0)
-                print(f"[proxy] 403 Blocked（attempt {attempt+1}），等待 {_delay:.1f}s 後重試")
+                print(f"[proxy] 403 Blocked（attempt {attempt+1}/{retries}，連續{_block_count}次），等待 {_delay:.1f}s")
                 _t.sleep(_delay)
+                if _block_count >= 2:
+                    break   # 換 IP（直連）可能不被封，提前跳出
                 continue
             if resp.status_code == 200:
                 # v13.9 關鍵修正：MoneyDJ 全站 Big5，強制解碼
-                # 若讓 requests 自行猜測編碼（通常猜 UTF-8）會全部亂碼
                 if "moneydj.com" in url:
                     resp.encoding = "big5"
                 else:
@@ -179,14 +193,15 @@ def fetch_url_with_retry(url, headers=None, params=None,
         except requests.exceptions.ProxyError as e:
             _proxy_err_count += 1
             print(f"[proxy] ProxyError（attempt {attempt+1}）：{e} — 確認 NAS 已啟動且 Port 3128 已轉發")
+            _t.sleep(sleep_sec)   # 僅 ProxyError/Timeout 需要 sleep；5xx 由 urllib3 backoff 處理
         except requests.exceptions.Timeout:
             print(f"[proxy] Timeout（attempt {attempt+1}）：{url[:60]}")
+            _t.sleep(sleep_sec)
         except Exception as e:
             print(f"錯誤：{e}")
-        _t.sleep(sleep_sec)
 
-    # v14.5 直連降級：Proxy 全數 ProxyError → 嘗試一次直連（NAS 不可達時的備援）
-    if _proxy and _proxy_err_count >= retries:
+    # 直連降級：有任何 ProxyError 或 403×2 → 嘗試一次直連（NAS 不可達 / IP 被封時的備援）
+    if _proxy and (_proxy_err_count > 0 or _block_count >= 2):
         print(f"[proxy] Proxy 全數失敗，降級直連嘗試：{url[:80]}")
         try:
             resp_dc = _sess.get(url, headers=_headers, params=params,
