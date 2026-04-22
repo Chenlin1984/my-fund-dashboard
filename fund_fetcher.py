@@ -52,6 +52,14 @@ class DataValidationError(Exception):
 # NAS Proxy 設定（讀取 st.secrets，缺失時降級直連）
 # ══════════════════════════════════════════════════════════════════
 _PROXY_CFG_CACHE = None   # None=未初始化；{}=已嘗試但不可用
+_PROXY_CFG_TS    = 0.0    # 上次讀取時間戳（TTL 300s，防止 NAS 回復後仍用舊 None）
+_PROXY_CFG_TTL   = 300    # 秒
+
+def reset_proxy_cache():
+    """手動清除 Proxy 快取，下次請求時重新讀取 st.secrets。"""
+    global _PROXY_CFG_CACHE, _PROXY_CFG_TS
+    _PROXY_CFG_CACHE = None
+    _PROXY_CFG_TS    = 0.0
 
 
 def get_proxy_config():
@@ -63,8 +71,10 @@ def get_proxy_config():
     - 缺失 / 任何例外 → 回傳 None（降級直連）
     結果快取於模組層級，同一程序內只讀一次。
     """
-    global _PROXY_CFG_CACHE
-    if _PROXY_CFG_CACHE is not None:
+    global _PROXY_CFG_CACHE, _PROXY_CFG_TS
+    import time as _t_proxy
+    # TTL 快取：300s 內重用，過期後重新讀取（允許 NAS 恢復後自動生效）
+    if _PROXY_CFG_CACHE is not None and (_t_proxy.time() - _PROXY_CFG_TS) < _PROXY_CFG_TTL:
         return _PROXY_CFG_CACHE if _PROXY_CFG_CACHE else None
     try:
         import streamlit as _st
@@ -78,6 +88,7 @@ def get_proxy_config():
         _PROXY_CFG_CACHE = {"http": _url, "https": _url}
     except Exception:
         _PROXY_CFG_CACHE = {}   # 已嘗試，不可用
+    _PROXY_CFG_TS = _t_proxy.time()
     return _PROXY_CFG_CACHE if _PROXY_CFG_CACHE else None
 
 
@@ -150,6 +161,7 @@ def fetch_url_with_retry(url, headers=None, params=None,
     _proxy  = _proxies()
     _verify = _ssl_verify()   # proxy 模式跳過 SSL 憑證驗證（Squid CONNECT 相容）
     _proxy_err_count = 0
+    _block_count     = 0   # 403 連續計數
     _sess = _make_retry_session()  # [修正: 雲端邊界防禦] urllib3 Retry 5xx backoff_factor=0.3
     for attempt in range(retries):
         try:
@@ -160,16 +172,18 @@ def fetch_url_with_retry(url, headers=None, params=None,
             if resp.status_code == 407:
                 print(f"[proxy] 407 Proxy Auth Failed — 請確認 st.secrets[proxy] 帳密正確")
                 return None
-            # 403 Target Blocked → 隨機延遲後重試
+            # 403 Target Blocked → 計數 + 隨機延遲；連續 2 次直接跳出試直連
             if resp.status_code == 403:
+                _block_count += 1
                 import random as _rnd
                 _delay = _rnd.uniform(2.5, 6.0)
-                print(f"[proxy] 403 Blocked（attempt {attempt+1}），等待 {_delay:.1f}s 後重試")
+                print(f"[proxy] 403 Blocked（attempt {attempt+1}/{retries}，連續{_block_count}次），等待 {_delay:.1f}s")
                 _t.sleep(_delay)
+                if _block_count >= 2:
+                    break   # 換 IP（直連）可能不被封，提前跳出
                 continue
             if resp.status_code == 200:
                 # v13.9 關鍵修正：MoneyDJ 全站 Big5，強制解碼
-                # 若讓 requests 自行猜測編碼（通常猜 UTF-8）會全部亂碼
                 if "moneydj.com" in url:
                     resp.encoding = "big5"
                 else:
@@ -179,14 +193,15 @@ def fetch_url_with_retry(url, headers=None, params=None,
         except requests.exceptions.ProxyError as e:
             _proxy_err_count += 1
             print(f"[proxy] ProxyError（attempt {attempt+1}）：{e} — 確認 NAS 已啟動且 Port 3128 已轉發")
+            _t.sleep(sleep_sec)   # 僅 ProxyError/Timeout 需要 sleep；5xx 由 urllib3 backoff 處理
         except requests.exceptions.Timeout:
             print(f"[proxy] Timeout（attempt {attempt+1}）：{url[:60]}")
+            _t.sleep(sleep_sec)
         except Exception as e:
             print(f"錯誤：{e}")
-        _t.sleep(sleep_sec)
 
-    # v14.5 直連降級：Proxy 全數 ProxyError → 嘗試一次直連（NAS 不可達時的備援）
-    if _proxy and _proxy_err_count >= retries:
+    # 直連降級：有任何 ProxyError 或 403×2 → 嘗試一次直連（NAS 不可達 / IP 被封時的備援）
+    if _proxy and (_proxy_err_count > 0 or _block_count >= 2):
         print(f"[proxy] Proxy 全數失敗，降級直連嘗試：{url[:80]}")
         try:
             resp_dc = _sess.get(url, headers=_headers, params=params,
@@ -2720,44 +2735,9 @@ def _fetch_fund_single(code: str, force_refresh: bool = False,
         data_source="",     # 記錄實際使用的來源
     )
 
-    # ── Step 1: 本地快取（最快，離線也能跑）──────────────────────────
-    if not force_refresh:
-        cached_s = _cache_load_nav(_code)
-        if cached_s is not None and len(cached_s) >= 10:
-            result["series"] = cached_s
-            result["data_source"] = "cache"
-
-        cached_div = _cache_load_div(_code)
-        if cached_div:
-            result["dividends"] = cached_div
-
-        cached_meta = _cache_load_meta(_code)
-        if cached_meta:
-            for k, v in cached_meta.items():
-                if v is not None:
-                    result[k] = v
-
-        # 快取完整 → 直接計算並回傳
-        if (result["series"] is not None and
-                len(result["series"]) >= 10 and
-                result.get("fund_name")):
-            _finish_metrics(result)
-            print(f"[orchestrator] 🚀 {_code} 完整快取命中，直接回傳")
-            return result
-
     # ── Step 2: 並行嘗試多來源（NAV）────────────────────────────────
     nav_s = pd.Series(dtype=float)
     nav_source = ""
-
-    # -1. v6.19: GitHub Actions 每日快取（最優先，完全繞過 IP 封鎖）
-    # cache/nav/{CODE}.json 由 .github/workflows/fetch_nav_cache.yml 每日更新
-    _cache_s = _src_cache_files(_code)
-    if len(_cache_s) >= 5:
-        nav_s = _cache_s
-        nav_source = "github_actions_cache"
-        result.setdefault("source_trace", []).append(
-            {"source": "github_actions_cache", "success": True, "nav_count": len(_cache_s)})
-        print(f"[orchestrator] 📦 {_code} 使用 GitHub Actions 快取 {len(_cache_s)} 筆")
 
     # 0. 安聯投信官網（ACTI/ACCP/ACDD 境內基金首選，Colab 友善）
     # v6.23 fix: 加入 len(nav_s) < 10 防護，避免覆蓋 GitHub Actions 快取資料
@@ -2959,7 +2939,6 @@ def _fetch_fund_single(code: str, force_refresh: bool = False,
         result["data_source"] = nav_source
         result.setdefault("source_trace", []).append(
             {"source": nav_source, "success": True, "nav_count": len(nav_s)})
-        _cache_save_nav(_code, nav_s)
     else:
         result.setdefault("source_trace", []).append(
             {"source": "nav_all", "success": False,
@@ -3014,7 +2993,6 @@ def _fetch_fund_single(code: str, force_refresh: bool = False,
     if meta:
         # v13.5: 用 merge_non_empty，不讓空值覆蓋前面成功的資料
         result = merge_non_empty(result, meta)
-        _cache_save_meta(_code, meta)
 
     # ── Step 4: 配息資料 ───────────────────────────────────────────
     divs = result.get("dividends") or []
@@ -3026,7 +3004,6 @@ def _fetch_fund_single(code: str, force_refresh: bool = False,
         divs = _src_cnyes_div(_code)
     if divs:
         result["dividends"] = divs
-        _cache_save_div(_code, divs)
         latest_yield = divs[0].get("yield_pct", 0)
         if latest_yield > 0:
             result["moneydj_div_yield"] = round(latest_yield, 2)
@@ -4311,6 +4288,8 @@ def calc_metrics(s: pd.Series, divs: list, risk_override: dict = None) -> dict:
         ref_low   = l2y
         buy_mode  = "2年高低點σ"
         print(f"[calc_metrics] 買點模式=2年高低點σ 高={ref_high} 低={ref_low}")
+
+    buy_basis = ref_low   # MK v2.0: 買點錨定年最低點
 
     # ── MK v2.0 公式：σ = 年最高淨值 × std% ──────────────────
     # σ_abs = 以現值為基礎的絕對標準差金額
