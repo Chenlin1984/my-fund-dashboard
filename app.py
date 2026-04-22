@@ -247,7 +247,6 @@ with tab1:
         if st.button(_btn_label, type="primary", key="btn_macro_load"):
             with st.spinner("📡 從 FRED / Yahoo Finance 抓取最新指標..."):
                 _t0_macro = _time_mod.time()
-                fetch_all_indicators.clear()   # 強制刷新 24h 快取
                 ind   = fetch_all_indicators(FRED_KEY)
                 _macro_ms = round((_time_mod.time() - _t0_macro) * 1000)
                 phase = calc_macro_phase(ind)
