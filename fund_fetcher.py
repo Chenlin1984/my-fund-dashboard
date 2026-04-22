@@ -4312,6 +4312,8 @@ def calc_metrics(s: pd.Series, divs: list, risk_override: dict = None) -> dict:
         buy_mode  = "2年高低點σ"
         print(f"[calc_metrics] 買點模式=2年高低點σ 高={ref_high} 低={ref_low}")
 
+    buy_basis = ref_low   # MK v2.0: 買點錨定年最低點
+
     # ── MK v2.0 公式：σ = 年最高淨值 × std% ──────────────────
     # σ_abs = 以現值為基礎的絕對標準差金額
     # 估算年高 = 年最高 - σ  （保守上限）
