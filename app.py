@@ -2056,9 +2056,11 @@ with tab3:
                         _rc_colors.append("#00c853")   # 健康 → 綠
 
                 fig_rc = go.Figure()
-                # 含息報酬率長條
+                # 含息報酬率長條（吃本金時顯示最小高度 0.5 以確保可見）
+                _rc_ret_vis = [max(_r, 0.5) if (_d > 0 and _r < _d) else _r
+                               for _r, _d in zip(_rc_ret, _rc_div)]
                 fig_rc.add_trace(go.Bar(
-                    x=_rc_names, y=_rc_ret,
+                    x=_rc_names, y=_rc_ret_vis,
                     name="含息報酬率(1Y)%",
                     marker_color=_rc_colors,
                     text=[f"{v:.1f}%" for v in _rc_ret],
@@ -2075,12 +2077,30 @@ with tab3:
                         hovertemplate="%{x}<br>配息率：%{y:.2f}%<extra></extra>"))
                 # 零基準線
                 fig_rc.add_hline(y=0, line_color="#555", line_width=1)
+                # ── 吃本金：背景色塊 + 標註 ──
+                _y_max = max(max(_rc_ret_vis, default=10), max(_rc_div, default=10)) * 1.35
+                for _i, (_r, _d, _n) in enumerate(zip(_rc_ret, _rc_div, _rc_names)):
+                    if _d > 0 and _r < _d:
+                        fig_rc.add_vrect(
+                            x0=_i - 0.45, x1=_i + 0.45,
+                            fillcolor="rgba(244,67,54,0.08)",
+                            line_color="rgba(244,67,54,0.4)", line_width=1,
+                            layer="below")
+                        fig_rc.add_annotation(
+                            x=_n, y=_y_max,
+                            text=f"⚠️ 吃本金<br>缺口 {_d-_r:.1f}%",
+                            showarrow=False,
+                            font=dict(color="#f44336", size=11),
+                            bgcolor="rgba(42,10,10,0.85)",
+                            bordercolor="#f44336", borderwidth=1,
+                            borderpad=4)
                 fig_rc.update_layout(
                     paper_bgcolor="#0e1117", plot_bgcolor="#161b22",
-                    font_color="#e6edf3", height=320,
-                    margin=dict(t=30, b=20, l=40, r=20),
+                    font_color="#e6edf3", height=360,
+                    margin=dict(t=40, b=20, l=40, r=20),
                     legend=dict(orientation="h", font_size=10, y=1.08),
                     yaxis_title="報酬率 / 配息率 (%)",
+                    yaxis=dict(range=[min(0, min(_rc_ret, default=0)) - 2, _y_max]),
                     bargap=0.35, hovermode="x unified")
                 st.plotly_chart(fig_rc, use_container_width=True)
 
