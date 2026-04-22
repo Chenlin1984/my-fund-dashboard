@@ -1616,31 +1616,34 @@ with tab2:
                                 + "</div>", unsafe_allow_html=True)
 
                         # ── 📖 配息覆蓋率講義卡（MK 郭俊宏《以息養股》）──
-                        _cov = float(_tr1y) / float(_adr)
-                        _cov_c = "#00c853" if _cov >= 1.0 else ("#ff9800" if _cov >= 0.8 else "#f44336")
-                        _cov_label = (
-                            "🟢 安全 — 報酬足以支撐配息，無吃本金疑慮" if _cov >= 1.0 else
-                            "🟡 注意 — 輕微侵蝕，需觀察趨勢" if _cov >= 0.8 else
-                            "🔴 警示 — 嚴重吃本金，領息賠價差"
-                        )
-                        st.markdown(
-                            f"<div style='background:#0d1117;border:1px dashed #30363d;"
-                            f"border-radius:10px;padding:10px 14px;margin-top:8px'>"
-                            f"<div style='color:#888;font-size:10px;letter-spacing:1px;margin-bottom:6px'>"
-                            f"📖 配息覆蓋率講義 ── MK 郭俊宏《以息養股》</div>"
-                            f"<div style='color:#aaa;font-size:11px;font-style:italic;"
-                            f"border-left:2px solid #444;padding-left:8px;margin-bottom:8px'>"
-                            f"「高殖利率不等於高報酬，必須確認是否吃本金。」</div>"
-                            f"<div style='font-family:monospace;font-size:12px;color:#e6edf3;margin-bottom:6px'>"
-                            f"Coverage = TR₁Y ÷ 年化配息率<br>"
-                            f"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;"
-                            f"= {_tr1y:.1f}% ÷ {_adr:.2f}%"
-                            f" = <span style='color:{_cov_c};font-weight:700;font-size:14px'>{_cov:.2f}</span></div>"
-                            f"<div style='color:{_cov_c};font-size:12px;font-weight:600;margin-bottom:6px'>"
-                            f"{_cov_label}</div>"
-                            f"<div style='color:#555;font-size:10px'>"
-                            f"Coverage ≥ 1.0 = 安全 ｜ 0.8–1.0 = 注意 ｜ &lt; 0.8 = 高警示</div>"
-                            f"</div>", unsafe_allow_html=True)
+                        _tr1y_f = float(_tr1y) if _tr1y is not None else None
+                        _adr_f  = float(_adr)  if _adr  else 0.0
+                        if _tr1y_f is not None and _adr_f > 0:
+                            _cov = _tr1y_f / _adr_f
+                            _cov_c = "#00c853" if _cov >= 1.0 else ("#ff9800" if _cov >= 0.8 else "#f44336")
+                            _cov_label = (
+                                "🟢 安全 — 報酬足以支撐配息，無吃本金疑慮" if _cov >= 1.0 else
+                                "🟡 注意 — 輕微侵蝕，需觀察趨勢" if _cov >= 0.8 else
+                                "🔴 警示 — 嚴重吃本金，領息賠價差"
+                            )
+                            st.markdown(
+                                f"<div style='background:#0d1117;border:1px dashed #30363d;"
+                                f"border-radius:10px;padding:10px 14px;margin-top:8px'>"
+                                f"<div style='color:#888;font-size:10px;letter-spacing:1px;margin-bottom:6px'>"
+                                f"📖 配息覆蓋率講義 ── MK 郭俊宏《以息養股》</div>"
+                                f"<div style='color:#aaa;font-size:11px;font-style:italic;"
+                                f"border-left:2px solid #444;padding-left:8px;margin-bottom:8px'>"
+                                f"「高殖利率不等於高報酬，必須確認是否吃本金。」</div>"
+                                f"<div style='font-family:monospace;font-size:12px;color:#e6edf3;margin-bottom:6px'>"
+                                f"Coverage = TR₁Y ÷ 年化配息率<br>"
+                                f"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;"
+                                f"= {_tr1y_f:.1f}% ÷ {_adr_f:.2f}%"
+                                f" = <span style='color:{_cov_c};font-weight:700;font-size:14px'>{_cov:.2f}</span></div>"
+                                f"<div style='color:{_cov_c};font-size:12px;font-weight:600;margin-bottom:6px'>"
+                                f"{_cov_label}</div>"
+                                f"<div style='color:#555;font-size:10px'>"
+                                f"Coverage ≥ 1.0 = 安全 ｜ 0.8–1.0 = 注意 ｜ &lt; 0.8 = 高警示</div>"
+                                f"</div>", unsafe_allow_html=True)
 
                     else:
                         st.info("無配息記錄")
