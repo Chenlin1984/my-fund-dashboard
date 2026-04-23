@@ -1,32 +1,35 @@
 # 專案戰情室 (Project State)
-> _最後更新：2026-04-18_
+> _最後更新：2026-04-23_
 
 ## 📌 當前狀態
 - **環境**: Streamlit Cloud + GitHub
-- **進度**: ✅ V6.0 Pro 三件套 **完成並推送**
-- **工作分支**: `claude/system-detox-upgrade-ra7Tp`（commit 9370775）
-- **app.py**: 3141 行，6 tabs，AST OK
+- **進度**: ✅ V7.0 系統強化全數 **合併至 main**
+- **工作分支**: `main`（直接推送，無待合併 PR）
+- **app.py**: 3195 行，6 tabs，AST OK
 - **precision_engine.py**: 347 行
 
 ---
 
-## ✅ V6.0 Pro（2026-04-18 完成）
+## ✅ V7.0 系統強化（2026-04-23 完成）
 
-| 步驟 | 內容 | Commit | 狀態 |
-|------|------|--------|------|
-| V6-1 | Tab1 L3 60/40 雙欄佈局 — `with _main_ctx:` + `_col_l3/_col_r3` | 9370775 | ✅ |
-| V6-2 | L3 Z-Score 矩陣（14 指標 × Z-Score，\|Z\|≥2 = ⚠️ 歷史極端值） | 9370775 | ✅ |
-| V6-3 | L3 情境判斷卡 A/B（PMI+薩姆 / ADL 觸發） | 9370775 | ✅ |
-| V6-4 | L3 資本防線圖（go.Bar TR1Y vs 配息率，🔴本金侵蝕警示） | 9370775 | ✅ |
+| Commit | 內容 | 狀態 |
+|--------|------|------|
+| 25421f7 | Tab3 健康矩陣：背景色塊+⚠️標註+缺口數字+最小長條高度 | ✅ |
+| a820521 | 配息覆蓋率講義卡 TypeError fix — `_adr>0` 防護 | ✅ |
+| 83bcb1a | 移除 `fetch_all_indicators.clear()` AttributeError | ✅ |
+| 8350da8 | 移除所有暫存沙盒（@st.cache_data / 本地檔 / GitHub Actions 快取） | ✅ |
+| c1b581e | Proxy fallback 四點強化（TTL/reset/403計數/sleep精準化） | ✅ |
+| 51bea84 | `buy_basis` NameError fix + 境內/境外 auto-detect | ✅ |
+| 096f604 | urllib3 Retry + `_check_secrets()` + 配息覆蓋率講義卡 | ✅ |
+| 89c55c6 | 固定視角等級 L3（移除 L1/L2 選項） | ✅ |
 
-### V6.0 架構說明
-- **60/40 佈局**: L3 時 `st.columns([3,2])` → `_main_ctx=_col_l3`（War Room+清單），`_col_r3`（Z-Score矩陣）
-- **Z-Score 矩陣**: 14 指標 × (當前值, Z-Score, 狀態)；Z = (值-均值)/標準差；|Z|≥2 = 極端值
-- **Situation A**: PMI<50 且 Sahm<0.5 → 庫存調整非衰退（黃色卡）
-- **Situation B**: ADL < -2% → 極端乖離警報（紅色卡）
-- **資本防線**: 有 portfolio_funds 時顯示，紅柱 = TR1Y < 配息率
+### V7.0 架構重點
+- **零快取架構**：移除 `@st.cache_data`，每次按鈕即時抓取 FRED
+- **無沙盒**：刪除 `cache/nav/`、`cache/div/`、`cache/meta/` 本地檔案快取
+- **Proxy TTL 300s**：`_PROXY_CFG_CACHE` 自動過期重讀，NAS 恢復後無需重啟
+- **境內/境外自動偵測**：`_auto_fetch_moneydj()` 境內優先，失敗自動試境外
+- **吃本金視覺化**：0% 長條最小高度 + 紅色背景色塊 + `⚠️ 吃本金 缺口 X.X%` 標註
 
----
 
 ## ✅ V5.0 Master Edition（2026-04-17 完成）
 
