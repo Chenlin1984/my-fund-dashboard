@@ -1,10 +1,14 @@
 {
   "code": "TLZF9",
   "fund_name": "",
-  "updated_at": "2026-04-23T17:52:53.081469+00:00",
+  "updated_at": "2026-04-24T17:29:19.172265+00:00",
   "source": "bank_platform",
-  "count": 9,
+  "count": 10,
   "history": [
+    {
+      "date": "2026-04-23",
+      "nav": 8.8005
+    },
     {
       "date": "2026-04-22",
       "nav": 8.7848
