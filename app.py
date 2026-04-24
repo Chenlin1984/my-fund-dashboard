@@ -82,9 +82,95 @@ for _k, _v in {
     "portfolio_funds":[],"portfolio_core_pct":75,
     "news_items":[],"systemic_risk_data":None,
     "api_latency_log":[],
+    "data_registry":{},
 }.items():
     if _k not in st.session_state:
         st.session_state[_k] = _v
+
+
+def _update_data_registry():
+    """掃描 session_state，將所有已載入的 DataFrame 時間戳記寫入 data_registry。"""
+    reg = {}
+
+    # 1. 總經指標 series (macro_engine indicators)
+    ind = st.session_state.get("indicators") or {}
+    for key, data in ind.items():
+        if not isinstance(data, dict):
+            continue
+        series = data.get("series")
+        name   = data.get("name", key)
+        latest_date = data.get("date", "N/A") or "N/A"
+        count  = 0
+        sorted_s = None
+        if series is not None:
+            try:
+                s = pd.Series(series).dropna().sort_index(ascending=False)
+                count = len(s)
+                if count > 0:
+                    latest_date = str(s.index[0])[:10]
+                sorted_s = s
+            except Exception:
+                pass
+        reg[f"總經_{key}"] = {
+            "label":       name,
+            "source":      "FRED/yfinance",
+            "latest_date": latest_date,
+            "count":       count,
+            "series":      sorted_s,
+        }
+
+    # 2. 單一基金淨值 series
+    fd = st.session_state.get("fund_data")
+    if isinstance(fd, dict):
+        s  = fd.get("series")
+        fn = fd.get("fund_name") or fd.get("full_key") or "基金"
+        latest_date = "N/A"
+        count = 0
+        sorted_s = None
+        if s is not None:
+            try:
+                s2 = pd.Series(s).dropna().sort_index(ascending=False)
+                count = len(s2)
+                if count > 0:
+                    latest_date = str(s2.index[0])[:10]
+                sorted_s = s2
+            except Exception:
+                pass
+        reg[f"基金_{fn}_淨值"] = {
+            "label":       f"{fn} 淨值",
+            "source":      "MoneyDJ",
+            "latest_date": latest_date,
+            "count":       count,
+            "series":      sorted_s,
+        }
+
+    # 3. 組合基金淨值 series
+    for f in (st.session_state.get("portfolio_funds") or []):
+        if not f.get("loaded"):
+            continue
+        fn = f.get("name") or f.get("code") or "基金"
+        s  = f.get("series")
+        latest_date = "N/A"
+        count = 0
+        sorted_s = None
+        if s is not None:
+            try:
+                s2 = pd.Series(s).dropna().sort_index(ascending=False)
+                count = len(s2)
+                if count > 0:
+                    latest_date = str(s2.index[0])[:10]
+                sorted_s = s2
+            except Exception:
+                pass
+        reg[f"組合_{fn}_淨值"] = {
+            "label":       f"{fn} 淨值",
+            "source":      "MoneyDJ",
+            "latest_date": latest_date,
+            "count":       count,
+            "series":      sorted_s,
+        }
+
+    st.session_state["data_registry"] = reg
 
 # ══════════════════════════════════════════════════════
 # SIDEBAR
@@ -266,6 +352,7 @@ with tab1:
                 st.session_state.macro_last_update = _now_tw()
                 if ind and "FED_RATE" in ind:
                     set_risk_free_rate(ind["FED_RATE"].get("value",4.0) / 100)
+                _update_data_registry()
                 # ── 記錄 API 延遲（供 Tab5 延遲趨勢圖）──
                 _lat_log = st.session_state.get("api_latency_log", [])
                 _lat_log.append({
@@ -1224,6 +1311,7 @@ with tab2:
                 "moneydj_raw": fd_raw,
                 "page_type":   _t2_page_type,
             }
+            _update_data_registry()
             if fd_raw.get("error"):
                 st.error(f"❌ {fd_raw['error']}")
             elif _status == "partial":
@@ -1973,6 +2061,7 @@ with tab3:
                             st.session_state.portfolio_funds[i].update({"loaded":True,"load_error":str(_le)[:80]})
                 if _errors:
                     st.warning("部分基金載入失敗：\n" + "\n".join(_errors))
+                _update_data_registry()
                 st.rerun()
 
         # 基金清單
@@ -2394,6 +2483,58 @@ with tab5:
         if st.button("🔄 重新載入總經", key="btn_d5_refresh"):
             st.session_state.macro_done = False
             st.rerun()
+
+    # ── Section 0: 全域資料健康總表 (Global Data Registry) ──────
+    _update_data_registry()
+    _reg = st.session_state.get("data_registry", {})
+    st.markdown("### 📋 全域資料健康總表")
+    if not _reg:
+        st.info("尚未載入任何數據。請先於 Tab1 載入總經資料，或於 Tab2/Tab3 載入基金資料。")
+    else:
+        _reg_rows = []
+        for _rk, _rv in _reg.items():
+            _rn = _rv.get("count", 0)
+            _rd = _rv.get("latest_date", "N/A")
+            _reg_rows.append({
+                "資料名稱": _rv.get("label", _rk),
+                "鍵值":     _rk,
+                "來源":     _rv.get("source", ""),
+                "最新日期": _rd,
+                "筆數":     _rn,
+                "狀態":     "✅" if _rn > 0 else "❌",
+            })
+        _reg_df = pd.DataFrame(_reg_rows)
+        st.dataframe(
+            _reg_df[["狀態", "資料名稱", "來源", "最新日期", "筆數"]],
+            use_container_width=True,
+            hide_index=True,
+        )
+        st.caption(f"共 {len(_reg_rows)} 個資料源 | 自動掃描 session_state，無寫死標的")
+
+        # Snapshot Viewer
+        with st.expander("🔍 資料抽查快照 (Snapshot Viewer)", expanded=False):
+            _snap_keys = [k for k, v in _reg.items() if v.get("series") is not None and v.get("count", 0) > 0]
+            if _snap_keys:
+                _snap_sel = st.selectbox(
+                    "選擇資料源查看原始資料（head 5，降冪排序）",
+                    _snap_keys,
+                    key="reg_snap_sel",
+                )
+                if _snap_sel:
+                    _snap_s = _reg[_snap_sel]["series"]
+                    try:
+                        _snap_df = pd.DataFrame({
+                            "日期":  _snap_s.index.astype(str),
+                            "數值":  _snap_s.values,
+                        }).head(5)
+                        st.dataframe(_snap_df, use_container_width=True, hide_index=True)
+                        st.caption(f"資料鍵值：{_snap_sel}　｜　共 {len(_snap_s)} 筆（已依時間降冪排序，顯示最新 5 筆）")
+                    except Exception as _snap_e:
+                        st.error(f"無法顯示快照：{_snap_e}")
+            else:
+                st.info("尚無含時間序列的資料可抽查。")
+
+    st.divider()
 
     # ── Section 1: 總經指標健康燈號 ──────────────────────────────
     st.markdown("### 🌐 總經指標（FRED / yfinance）")
