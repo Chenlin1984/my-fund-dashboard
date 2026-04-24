@@ -90,6 +90,77 @@ for _k, _v in {
 
 def _update_data_registry():
     """掃描 session_state，將所有已載入的 DataFrame 時間戳記寫入 data_registry。"""
+
+    # ── 頻率對照表 (indicator key → 更新頻率) ─────────────────────
+    _FREQ: dict[str, str] = {
+        # 日頻（yfinance 市場資料）
+        "VIX":          "daily",
+        "DXY":          "daily",
+        "ADL":          "daily",
+        "COPPER":       "daily",
+        # 日頻（FRED 每交易日）
+        "YIELD_10Y2Y":  "daily",
+        "YIELD_10Y3M":  "daily",
+        "HY_SPREAD":    "daily",
+        # 週頻
+        "FED_BS":       "weekly",
+        # 月頻（FRED 月度調查/統計）
+        "SAHM":         "monthly",
+        "PMI":          "monthly",
+        "CPI":          "monthly",
+        "UNEMPLOYMENT": "monthly",
+        "M2":           "monthly",
+        "FED_RATE":     "monthly",
+        "PPI":          "monthly",
+        # 季頻（FRED 季度調查）
+        "SLOOS":        "quarterly",
+    }
+
+    def _freshness(date_str: str, freq: str) -> tuple[str, str, str]:
+        """回傳 (icon, label, hex_color)。"""
+        try:
+            dt  = pd.to_datetime(date_str).date()
+            age = (datetime.date.today() - dt).days
+        except Exception:
+            return "⬜", "未知日期", "#555555"
+
+        if freq == "daily":
+            if age <= 3:
+                return "🟢", f"最新（{age}天前）", "#00c853"
+            if age <= 7:
+                return "🟡", f"延遲（{age}天前）", "#ff9800"
+            return "🔴", f"過舊（{age}天）", "#f44336"
+
+        if freq == "weekly":
+            if age <= 10:
+                return "🟢", f"本週（{age}天前）", "#00c853"
+            if age <= 21:
+                return "🟡", f"延遲（{age}天前）", "#ff9800"
+            return "🔴", f"過舊（{age}天）", "#f44336"
+
+        if freq == "monthly":
+            # 月度資料通常延遲 2–6 週發布
+            if age <= 45:
+                return "🟢", f"本/上月（{age}天前）", "#00c853"
+            if age <= 75:
+                return "🟡", f"延遲（{age}天前）", "#ff9800"
+            return "🔴", f"過舊（{age}天）", "#f44336"
+
+        if freq == "quarterly":
+            # 季度資料：一季 ≈ 91 天，容忍至 95 天
+            if age <= 95:
+                return "🟢", f"本/上季（{age}天前）", "#00c853"
+            if age <= 140:
+                return "🟡", f"延遲（{age}天前）", "#ff9800"
+            return "🔴", f"過舊（{age}天）", "#f44336"
+
+        # nav / 未知 → 按日頻處理但容忍 7 天（T+1/T+2 報價）
+        if age <= 7:
+            return "🟢", f"最新（{age}天前）", "#00c853"
+        if age <= 14:
+            return "🟡", f"延遲（{age}天前）", "#ff9800"
+        return "🔴", f"過舊（{age}天）", "#f44336"
+
     reg = {}
 
     # 1. 總經指標 series (macro_engine indicators)
@@ -111,12 +182,18 @@ def _update_data_registry():
                 sorted_s = s
             except Exception:
                 pass
+        freq = _FREQ.get(key, "monthly")
+        icon, flabel, fcolor = _freshness(latest_date, freq)
         reg[f"總經_{key}"] = {
             "label":       name,
             "source":      "FRED/yfinance",
             "latest_date": latest_date,
             "count":       count,
             "series":      sorted_s,
+            "freq":        freq,
+            "fresh_icon":  icon,
+            "fresh_label": flabel,
+            "fresh_color": fcolor,
         }
 
     # 2. 單一基金淨值 series
@@ -136,12 +213,17 @@ def _update_data_registry():
                 sorted_s = s2
             except Exception:
                 pass
+        icon, flabel, fcolor = _freshness(latest_date, "nav")
         reg[f"基金_{fn}_淨值"] = {
             "label":       f"{fn} 淨值",
             "source":      "MoneyDJ",
             "latest_date": latest_date,
             "count":       count,
             "series":      sorted_s,
+            "freq":        "nav",
+            "fresh_icon":  icon,
+            "fresh_label": flabel,
+            "fresh_color": fcolor,
         }
 
     # 3. 組合基金淨值 series
@@ -162,12 +244,17 @@ def _update_data_registry():
                 sorted_s = s2
             except Exception:
                 pass
+        icon, flabel, fcolor = _freshness(latest_date, "nav")
         reg[f"組合_{fn}_淨值"] = {
             "label":       f"{fn} 淨值",
             "source":      "MoneyDJ",
             "latest_date": latest_date,
             "count":       count,
             "series":      sorted_s,
+            "freq":        "nav",
+            "fresh_icon":  icon,
+            "fresh_label": flabel,
+            "fresh_color": fcolor,
         }
 
     st.session_state["data_registry"] = reg
@@ -2488,28 +2575,68 @@ with tab5:
     _update_data_registry()
     _reg = st.session_state.get("data_registry", {})
     st.markdown("### 📋 全域資料健康總表")
+
+    _FREQ_LABEL = {
+        "daily": "日", "weekly": "週", "monthly": "月",
+        "quarterly": "季", "nav": "日(NAV)",
+    }
+
     if not _reg:
         st.info("尚未載入任何數據。請先於 Tab1 載入總經資料，或於 Tab2/Tab3 載入基金資料。")
     else:
-        _reg_rows = []
-        for _rk, _rv in _reg.items():
-            _rn = _rv.get("count", 0)
-            _rd = _rv.get("latest_date", "N/A")
-            _reg_rows.append({
-                "資料名稱": _rv.get("label", _rk),
-                "鍵值":     _rk,
-                "來源":     _rv.get("source", ""),
-                "最新日期": _rd,
-                "筆數":     _rn,
-                "狀態":     "✅" if _rn > 0 else "❌",
-            })
-        _reg_df = pd.DataFrame(_reg_rows)
-        st.dataframe(
-            _reg_df[["狀態", "資料名稱", "來源", "最新日期", "筆數"]],
-            use_container_width=True,
-            hide_index=True,
+        # 表格標頭
+        _th = ("font-size:10px;color:#888;font-weight:700;padding:4px 8px;"
+               "border-bottom:1px solid #30363d")
+        _td_base = "font-size:11px;padding:4px 8px"
+        _hdr = (
+            f"<div style='display:grid;grid-template-columns:2fr 1fr 1fr 1fr 3fr 1fr;"
+            f"background:#0d1117;border-radius:6px 6px 0 0'>"
+            f"<span style='{_th}'>資料名稱</span>"
+            f"<span style='{_th}'>來源</span>"
+            f"<span style='{_th}'>頻率</span>"
+            f"<span style='{_th}'>最新日期</span>"
+            f"<span style='{_th}'>新鮮度</span>"
+            f"<span style='{_th}'>筆數</span>"
+            f"</div>"
         )
-        st.caption(f"共 {len(_reg_rows)} 個資料源 | 自動掃描 session_state，無寫死標的")
+        _rows_html = _hdr
+        _stale_list = []
+        for _rk, _rv in _reg.items():
+            _rn    = _rv.get("count", 0)
+            _rd    = _rv.get("latest_date", "N/A")
+            _freq  = _rv.get("freq", "monthly")
+            _ficon = _rv.get("fresh_icon", "⬜")
+            _flbl  = _rv.get("fresh_label", "未知")
+            _fcol  = _rv.get("fresh_color", "#555")
+            _row_bg = "#161b22" if _ficon == "🟢" else ("#1a1200" if _ficon == "🟡" else "#1a0808")
+            _rows_html += (
+                f"<div style='display:grid;grid-template-columns:2fr 1fr 1fr 1fr 3fr 1fr;"
+                f"background:{_row_bg};border-bottom:1px solid #21262d'>"
+                f"<span style='{_td_base};color:#e6edf3'>{_rv.get('label', _rk)}</span>"
+                f"<span style='{_td_base};color:#888'>{_rv.get('source','')}</span>"
+                f"<span style='{_td_base};color:#555'>{_FREQ_LABEL.get(_freq, _freq)}</span>"
+                f"<span style='{_td_base};color:#aaa'>{_rd}</span>"
+                f"<span style='{_td_base};color:{_fcol};font-weight:600'>{_ficon} {_flbl}</span>"
+                f"<span style='{_td_base};color:#aaa'>{_rn}</span>"
+                f"</div>"
+            )
+            if _ficon == "🔴":
+                _stale_list.append(_rv.get("label", _rk))
+        st.markdown(
+            f"<div style='border:1px solid #30363d;border-radius:6px;overflow:hidden'>"
+            f"{_rows_html}</div>",
+            unsafe_allow_html=True,
+        )
+        _reg_total = len(_reg)
+        _reg_green = sum(1 for v in _reg.values() if v.get("fresh_icon") == "🟢")
+        _reg_yellow = sum(1 for v in _reg.values() if v.get("fresh_icon") == "🟡")
+        _reg_red   = sum(1 for v in _reg.values() if v.get("fresh_icon") == "🔴")
+        st.caption(
+            f"共 {_reg_total} 個資料源｜🟢 最新 {_reg_green}　🟡 延遲 {_reg_yellow}　"
+            f"🔴 過舊 {_reg_red}　| 自動掃描 session_state，無寫死標的"
+        )
+        if _stale_list:
+            st.warning(f"🔴 **過舊資料（建議重新抓取）**：{', '.join(_stale_list)}")
 
         # Snapshot Viewer
         with st.expander("🔍 資料抽查快照 (Snapshot Viewer)", expanded=False):
@@ -2521,14 +2648,18 @@ with tab5:
                     key="reg_snap_sel",
                 )
                 if _snap_sel:
-                    _snap_s = _reg[_snap_sel]["series"]
+                    _snap_s  = _reg[_snap_sel]["series"]
+                    _snap_fq = _FREQ_LABEL.get(_reg[_snap_sel].get("freq",""), "")
                     try:
                         _snap_df = pd.DataFrame({
                             "日期":  _snap_s.index.astype(str),
                             "數值":  _snap_s.values,
                         }).head(5)
                         st.dataframe(_snap_df, use_container_width=True, hide_index=True)
-                        st.caption(f"資料鍵值：{_snap_sel}　｜　共 {len(_snap_s)} 筆（已依時間降冪排序，顯示最新 5 筆）")
+                        st.caption(
+                            f"資料鍵值：{_snap_sel}　頻率：{_snap_fq}　｜　"
+                            f"共 {len(_snap_s)} 筆（已依時間降冪排序，顯示最新 5 筆）"
+                        )
                     except Exception as _snap_e:
                         st.error(f"無法顯示快照：{_snap_e}")
             else:
